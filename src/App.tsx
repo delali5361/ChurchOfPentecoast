@@ -1,167 +1,154 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
-import {
-  Activity, ArrowDownRight, ArrowUpRight, BarChart3, Bell, BriefcaseBusiness, CalendarDays, Check,
-  CheckCircle2, ChevronDown, CircleDollarSign, ClipboardCheck, Clock3, Command, Database, Download,
-  FileText, Filter, HeartHandshake, LayoutDashboard, LockKeyhole, LogOut, Menu, MessageSquareText,
-  MoreHorizontal, Plus, Search, Send, Settings, ShieldCheck, SlidersHorizontal, Sparkles, UserCog,
-  Users, X,
-} from 'lucide-react';
-import { createClient, Session } from '@supabase/supabase-js';
-
-type Page = 'Overview' | 'People' | 'Attendance' | 'Events' | 'Finance' | 'Communications' | 'Pastoral care' | 'Reports' | 'Administration';
-type Member = { id: string; first_name: string; last_name: string; email: string | null; membership_status: string; branch_id: string | null };
-type EventItem = { id: string; title: string; event_type: string; starts_at: string; location: string | null; attendee_count: number };
-type AttendanceSession = { id: string; title: string; session_type: string; session_date: string; expected_count: number };
-type Campaign = { id: string; name: string; channel: string; audience: string; status: string; sent_count: number; created_at: string };
-type FollowUp = { id: string; title: string; category: string; due_date: string; status: string; notes: string | null };
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
+import { AppShell } from './components/AppShell';
+import { Icon } from './components/Icon';
+import { pageSections } from './navigation';
+import { AdministrationPage } from './pages/AdministrationPage';
+import { AttendancePage } from './pages/AttendancePage';
+import { CommunicationsPage } from './pages/CommunicationsPage';
+import { EventsPage } from './pages/EventsPage';
+import { FinancePage } from './pages/FinancePage';
+import { HouseholdsPage } from './pages/HouseholdsPage';
+import { OverviewPage } from './pages/OverviewPage';
+import { OnboardingPage } from './pages/OnboardingPage';
+import { PastoralCarePage } from './pages/PastoralCarePage';
+import { PeoplePage } from './pages/PeoplePage';
+import { ReportsPage } from './pages/ReportsPage';
+import { SignInPage } from './pages/SignInPage';
+import { StructurePage } from './pages/StructurePage';
+import { VisitorsPage } from './pages/VisitorsPage';
+import type { PageId } from './types';
+import { getCurrentUserRoles } from './auth';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+const supabase: SupabaseClient | null = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
-const demoMembers: Member[] = [
-  { id: '1', first_name: 'Ama', last_name: 'Mensah', email: 'ama@graceassembly.org', membership_status: 'member', branch_id: 'main' },
-  { id: '2', first_name: 'Kwame', last_name: 'Owusu', email: 'kwame@graceassembly.org', membership_status: 'leader', branch_id: 'main' },
-  { id: '3', first_name: 'Joana', last_name: 'Asare', email: 'joana@graceassembly.org', membership_status: 'newcomer', branch_id: 'east' },
-  { id: '4', first_name: 'Daniel', last_name: 'Boateng', email: 'daniel@graceassembly.org', membership_status: 'member', branch_id: 'main' },
-  { id: '5', first_name: 'Esi', last_name: 'Addo', email: 'esi@graceassembly.org', membership_status: 'worker', branch_id: 'north' },
-];
-const demoEvents: EventItem[] = [
-  { id: '1', title: 'Sunday Celebration Service', event_type: 'service', starts_at: '2026-10-11T08:00:00', location: 'Main Auditorium', attendee_count: 620 },
-  { id: '2', title: 'Young Adults Connect', event_type: 'ministry', starts_at: '2026-10-12T18:30:00', location: 'Grace Hall', attendee_count: 85 },
-  { id: '3', title: 'Leadership Prayer Breakfast', event_type: 'meeting', starts_at: '2026-10-14T07:00:00', location: 'Upper Room', attendee_count: 32 },
-];
-const demoAttendance: AttendanceSession[] = [
-  { id: '1', title: 'Sunday Celebration Service', session_type: 'Sunday service', session_date: '2026-10-04', expected_count: 620 },
-  { id: '2', title: 'Midweek Encounter', session_type: 'Midweek service', session_date: '2026-10-07', expected_count: 284 },
-  { id: '3', title: 'Young Adults Connect', session_type: 'Ministry gathering', session_date: '2026-10-08', expected_count: 85 },
-];
-const demoCampaigns: Campaign[] = [
-  { id: '1', name: 'October welcome note', channel: 'Email', audience: 'Newcomers', status: 'sent', sent_count: 42, created_at: '2026-10-08' },
-  { id: '2', name: 'Leadership prayer reminder', channel: 'SMS', audience: 'Leaders', status: 'scheduled', sent_count: 0, created_at: '2026-10-07' },
-  { id: '3', name: 'Sunday service update', channel: 'In-app', audience: 'Entire church', status: 'draft', sent_count: 0, created_at: '2026-10-06' },
-];
-const demoFollowUps: FollowUp[] = [
-  { id: '1', title: 'New member follow-up · Kofi Asante', category: 'Visitor care', due_date: '2026-10-09', status: 'pending', notes: 'First visit was last Sunday.' },
-  { id: '2', title: 'Pastoral visit · Akua Mensah', category: 'Pastoral care', due_date: '2026-10-10', status: 'in progress', notes: 'Coordinate with the care team.' },
-  { id: '3', title: 'Prayer request · Yaw Danso', category: 'Prayer', due_date: '2026-10-14', status: 'pending', notes: null },
-];
-
-const navGroups: { label: string; items: { label: Page; icon: typeof LayoutDashboard }[] }[] = [
-  { label: 'Workspace', items: [{ label: 'Overview', icon: LayoutDashboard }, { label: 'People', icon: Users }, { label: 'Attendance', icon: ClipboardCheck }, { label: 'Events', icon: CalendarDays }, { label: 'Finance', icon: CircleDollarSign }] },
-  { label: 'Care & connect', items: [{ label: 'Communications', icon: MessageSquareText }, { label: 'Pastoral care', icon: HeartHandshake }] },
-  { label: 'Insights', items: [{ label: 'Reports', icon: BarChart3 }, { label: 'Administration', icon: SlidersHorizontal }] },
-];
+const pageComponents: Partial<Record<PageId, (props: { onAction: (message: string) => void }) => JSX.Element | null>> = {
+  people: PeoplePage,
+  visitors: VisitorsPage,
+  households: HouseholdsPage,
+  structure: StructurePage,
+  attendance: AttendancePage,
+  events: EventsPage,
+  finance: FinancePage,
+  communications: CommunicationsPage,
+  'pastoral-care': PastoralCarePage,
+  reports: ReportsPage,
+  administration: AdministrationPage,
+};
 
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!supabase);
-  const [page, setPage] = useState<Page>('Overview');
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [showMemberModal, setShowMemberModal] = useState(false);
-  const [members, setMembers] = useState<Member[]>(demoMembers);
-  const [events, setEvents] = useState<EventItem[]>(demoEvents);
-  const [attendance, setAttendance] = useState<AttendanceSession[]>(demoAttendance);
-  const [campaigns, setCampaigns] = useState<Campaign[]>(demoCampaigns);
-  const [followUps, setFollowUps] = useState<FollowUp[]>(demoFollowUps);
-  const [search, setSearch] = useState('');
+  const [activePage, setActivePage] = useState<PageId>('overview');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [roles, setRoles] = useState<string[]>([]);
+  const [roleReady, setRoleReady] = useState(!supabase);
+  const [workspaceError, setWorkspaceError] = useState('');
   const [toast, setToast] = useState('');
-  const [roles, setRoles] = useState<string[]>(['administrator']);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const toastTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (!supabase) return;
-    void supabase.auth.getSession().then(({ data }) => { setSession(data.session); setAuthReady(true); });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => { setSession(nextSession); setAuthReady(true); });
-    return () => listener.subscription.unsubscribe();
+    let mounted = true;
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (!mounted) return;
+      if (error) setWorkspaceError(`Could not restore your sign-in session: ${error.message}`);
+      setSession(data.session);
+      setAuthReady(true);
+    }).catch((error: unknown) => {
+      if (!mounted) return;
+      setWorkspaceError(`Could not restore your sign-in session: ${error instanceof Error ? error.message : 'Unknown authentication error.'}`);
+      setAuthReady(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthReady(true);
+      setRoles([]);
+      setRoleReady(!nextSession);
+    });
+    return () => { mounted = false; listener.subscription.unsubscribe(); };
   }, []);
 
   useEffect(() => {
-    if (!supabase || !session) return;
-    const loadData = async () => {
-      const [memberResult, eventResult, attendanceResult, campaignResult, followUpResult, roleResult] = await Promise.all([
-        supabase.from('members').select('id, first_name, last_name, email, membership_status, branch_id').order('created_at', { ascending: false }).limit(30),
-        supabase.from('events').select('id, title, event_type, starts_at, location, attendee_count').gte('starts_at', new Date().toISOString()).order('starts_at').limit(12),
-        supabase.from('attendance_sessions').select('id, title, session_type, session_date, expected_count').order('session_date', { ascending: false }).limit(12),
-        supabase.from('communication_campaigns').select('id, name, channel, audience, status, sent_count, created_at').order('created_at', { ascending: false }).limit(12),
-        supabase.from('follow_ups').select('id, title, category, due_date, status, notes').order('due_date').limit(12),
-        supabase.from('user_roles').select('app_roles(code)').eq('user_id', session.user.id),
-      ]);
-      if (!memberResult.error && memberResult.data?.length) setMembers(memberResult.data as Member[]);
-      if (!eventResult.error && eventResult.data?.length) setEvents(eventResult.data as EventItem[]);
-      if (!attendanceResult.error && attendanceResult.data?.length) setAttendance(attendanceResult.data as AttendanceSession[]);
-      if (!campaignResult.error && campaignResult.data?.length) setCampaigns(campaignResult.data as Campaign[]);
-      if (!followUpResult.error && followUpResult.data?.length) setFollowUps(followUpResult.data as FollowUp[]);
-      if (!roleResult.error && roleResult.data?.length) setRoles(roleResult.data.map((item) => { const role = item.app_roles as unknown as { code: string } | null; return role?.code ?? ''; }).filter(Boolean));
+    if (!searchOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSearchOpen(false);
     };
-    void loadData();
-  }, [session]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [searchOpen]);
 
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchQuery('');
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  }, []);
+
+  useEffect(() => () => {
+    if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
+  }, []);
+
+  const navigationItems = useMemo(() => pageSections.flatMap((section) => section.items)
+    .filter((item) => `${item.label} ${item.description}`.toLowerCase().includes(searchQuery.trim().toLowerCase())), [searchQuery]);
+
+  const notify = (message: string) => {
+    setToast(message);
+    if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(''), 3800);
+  };
+  const signOut = async () => {
+    if (!supabase) return;
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) notify(`Could not sign out: ${error.message}`);
+    } catch (error) {
+      notify(`Could not sign out: ${error instanceof Error ? error.message : 'Unknown authentication error.'}`);
+    }
+  };
   const canSeePastoral = !supabase || roles.includes('administrator') || roles.includes('pastoral_care');
-  const filteredMembers = useMemo(() => members.filter((member) => `${member.first_name} ${member.last_name}`.toLowerCase().includes(search.toLowerCase())), [members, search]);
+  const administratorName = session?.user.email ?? 'Church administrator';
 
-  const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 3500); };
-  const addMember = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const firstName = String(form.get('first_name') ?? '');
-    const lastName = String(form.get('last_name') ?? '');
-    const email = String(form.get('email') ?? '');
-    const newMember: Member = { id: crypto.randomUUID(), first_name: firstName, last_name: lastName, email, membership_status: 'newcomer', branch_id: 'main' };
-    if (supabase) {
-      const { data, error } = await supabase.from('members').insert({ first_name: firstName, last_name: lastName, email, membership_status: 'newcomer' }).select('id, first_name, last_name, email, membership_status, branch_id').maybeSingle();
-      setMembers((current) => [(!error && data ? data : newMember) as Member, ...current]);
-    } else setMembers((current) => [newMember, ...current]);
-    setShowMemberModal(false); notify(`${firstName} ${lastName} added to your people list`);
-  };
+  if (!authReady) return <div className="auth-loading"><span className="loading-spinner" /><span>Preparing your workspace</span></div>;
+  if (supabase && !session) return <SignInPage client={supabase} onStartOnboarding={() => setShowOnboarding(true)} />;
+  if (showOnboarding) return <OnboardingPage />;
+  if (supabase && !roleReady) return <div className="auth-loading"><span className="loading-spinner" /><span>Checking your workspace access</span></div>;
 
-  if (!authReady) return <div className="auth-loading"><div className="brand-mark"><Sparkles size={18} /></div><span>Preparing your workspace</span></div>;
-  if (supabase && !session) return <AuthScreen />;
-
-  const title = page === 'Overview' ? 'Good morning, Michael' : page;
-  const subtitle = page === 'Overview' ? 'Here is what is happening across Grace Assembly today.' : `Manage your church ${page.toLowerCase()} in one calm, focused workspace.`;
-  return <div className="app-shell"><div className="ambient ambient-one" /><div className="ambient ambient-two" /><Sidebar page={page} setPage={setPage} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} onSignOut={() => { if (supabase) void supabase.auth.signOut(); }} canSeePastoral={canSeePastoral} /><main className="main-content"><header className="topbar"><button className="icon-button menu-button" onClick={() => setMobileOpen(true)} aria-label="Open navigation"><Menu size={20} /></button><div className="breadcrumb"><span>Grace Assembly</span><span>/</span><strong>{page}</strong></div><div className="topbar-actions"><button className="search-trigger" onClick={() => document.getElementById('global-search')?.focus()}><Search size={17} /><span>Search anything</span><kbd><Command size={12} /> K</kbd></button><button className="icon-button notification-button" onClick={() => notify('You are all caught up')} aria-label="Notifications"><Bell size={18} /><i /></button><div className="avatar avatar-light">{session?.user.email?.slice(0, 2).toUpperCase() ?? 'MC'}</div></div></header><div className="page-wrap"><section className="page-heading"><div><div className="eyebrow"><span className="live-dot" /> Tuesday, October 9, 2026</div><h1>{title}</h1><p>{subtitle}</p></div><div className="heading-actions"><button className="button button-ghost" onClick={() => notify('Your report is being prepared')}><Activity size={16} /> View report</button><button className="button button-primary" onClick={() => setShowMemberModal(true)}><Plus size={17} /> Add member</button></div></section>{page === 'Overview' && <Overview events={events} members={members} followUps={followUps} onViewPeople={() => setPage('People')} onNavigate={setPage} />} {page === 'People' && <PeoplePage members={filteredMembers} search={search} setSearch={setSearch} onAdd={() => setShowMemberModal(true)} />} {page === 'Attendance' && <AttendancePage sessions={attendance} onCreate={async (titleValue, typeValue) => { const item: AttendanceSession = { id: crypto.randomUUID(), title: titleValue, session_type: typeValue, session_date: new Date().toISOString().slice(0, 10), expected_count: 0 }; if (supabase) { const { data } = await supabase.from('attendance_sessions').insert({ title: titleValue, session_type: typeValue }).select('id, title, session_type, session_date, expected_count').maybeSingle(); setAttendance((items) => [data ? data as AttendanceSession : item, ...items]); } else setAttendance((items) => [item, ...items]); notify('Attendance session created'); }} />} {page === 'Events' && <EventsPage events={events} />} {page === 'Finance' && <FinancePage />} {page === 'Communications' && <CommunicationsPage campaigns={campaigns} onCreate={async (name, channel, audience, message) => { const item: Campaign = { id: crypto.randomUUID(), name, channel, audience, status: 'draft', sent_count: 0, created_at: new Date().toISOString() }; if (supabase) { const { data } = await supabase.from('communication_campaigns').insert({ name, channel, audience, message }).select('id, name, channel, audience, status, sent_count, created_at').maybeSingle(); setCampaigns((items) => [data ? data as Campaign : item, ...items]); } else setCampaigns((items) => [item, ...items]); notify('Communication campaign saved'); }} />} {page === 'Pastoral care' && <PastoralPage canSee={canSeePastoral} />} {page === 'Reports' && <ReportsPage onExport={() => notify('Your CSV export is being prepared')} />} {page === 'Administration' && <AdministrationPage roles={roles} onNotify={notify} />}</div></main>{showMemberModal && <MemberModal onClose={() => setShowMemberModal(false)} onSubmit={addMember} />}{toast && <div className="toast"><Check size={16} />{toast}</div>}</div>;
+  const PageComponent = pageComponents[activePage];
+  return <>
+    <AppShell activePage={activePage} onNavigate={setActivePage} menuOpen={menuOpen} onMenuOpen={() => setMenuOpen(true)}
+      onMenuClose={() => setMenuOpen(false)} administratorName={administratorName} canSeePastoral={canSeePastoral}
+      onSignOut={() => { void signOut(); }} onSearch={() => { setSearchQuery(''); setSearchOpen(true); }}>
+      {workspaceError && <div className="workspace-alert" role="alert"><Icon name="shield" size={17} /><span>{workspaceError}</span><button className="icon-button" onClick={() => setWorkspaceError('')} aria-label="Dismiss message"><Icon name="close" size={16} /></button></div>}
+      {!supabase && <div className="demo-mode-banner"><Icon name="sparkle" size={14} /> Preview mode <span>Connect Supabase to enable authentication and live records.</span></div>}
+      {activePage === 'overview'
+        ? <OverviewPage onNavigate={setActivePage} />
+        : PageComponent
+          ? <PageComponent onAction={notify} />
+          : <OverviewPage onNavigate={setActivePage} />}
+    </AppShell>
+    {searchOpen && <div className="search-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
+      <section className="search-dialog" role="dialog" aria-modal="true" aria-label="Search church workspaces">
+        <label className="global-search-field"><Icon name="search" size={19} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search church workspaces..." aria-label="Search church workspaces" /><kbd>ESC</kbd></label>
+        <span className="search-section-label">{searchQuery ? 'Matching workspaces' : 'Navigate to a workspace'}</span>
+        <div className="search-results">{navigationItems.map((item) => <button key={item.id} className="search-result" onClick={() => { setActivePage(item.id); setSearchOpen(false); }}>
+          <span className="search-result-icon"><Icon name={item.icon} size={17} /></span><span><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="chevron-right" size={16} />
+        </button>)}{!navigationItems.length && <div className="search-empty">No workspaces match that search. Try a different term.</div>}</div>
+        <div className="search-dialog-footer"><Icon name="sparkle" size={13} /> Search across church workspaces</div>
+      </section>
+    </div>}
+    {toast && <div className="toast" role="status"><Icon name="check" size={16} />{toast}</div>}
+  </>;
 }
-
-function AuthScreen() {
-  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState('');
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setBusy(true); setMessage('');
-    const form = new FormData(event.currentTarget); const email = String(form.get('email') ?? ''); const password = String(form.get('password') ?? '');
-    const result = mode === 'sign-in' ? await supabase?.auth.signInWithPassword({ email, password }) : await supabase?.auth.signUp({ email, password });
-    setBusy(false); if (result?.error) setMessage('We could not complete that request. Check your details and try again.'); else if (mode === 'sign-up') setMessage('Your account is ready. Sign in to open the workspace.');
-  };
-  return <div className="auth-screen"><div className="auth-visual"><div className="auth-logo"><div className="brand-mark"><Sparkles size={19} /></div><strong>Grace Assembly</strong></div><div className="auth-quote"><span className="eyebrow"><ShieldCheck size={14} /> Trusted church operations</span><h1>Care for your people.<br /><em>Lead with clarity.</em></h1><p>A calm, secure workspace for the people and ministry work that matters most.</p></div><div className="auth-orbit orbit-one" /><div className="auth-orbit orbit-two" /></div><div className="auth-card-wrap"><div className="auth-card"><div className="auth-card-heading"><div className="brand-mark"><Sparkles size={18} /></div><span>Church workspace</span><h2>{mode === 'sign-in' ? 'Welcome back' : 'Create your workspace access'}</h2><p>{mode === 'sign-in' ? 'Sign in to continue to Grace Assembly.' : 'The first account becomes the church administrator.'}</p></div><form onSubmit={submit}><label>Email address<input type="email" name="email" required autoComplete="email" placeholder="you@church.org" /></label><label>Password<input type="password" name="password" required minLength={6} autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} placeholder="At least 6 characters" /></label>{message && <div className="form-message">{message}</div>}<button className="button button-primary auth-submit" disabled={busy}>{busy ? 'Working...' : mode === 'sign-in' ? 'Sign in securely' : 'Create account'} <ArrowUpRight size={16} /></button></form><button className="auth-switch" onClick={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setMessage(''); }}>{mode === 'sign-in' ? 'Need access? Create an account' : 'Already have access? Sign in'}</button><small className="auth-note"><LockKeyhole size={13} /> Protected with Supabase authentication</small></div></div></div>;
-}
-
-function Sidebar({ page, setPage, mobileOpen, setMobileOpen, onSignOut, canSeePastoral }: { page: Page; setPage: (page: Page) => void; mobileOpen: boolean; setMobileOpen: (open: boolean) => void; onSignOut: () => void; canSeePastoral: boolean }) {
-  return <><aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}><div className="brand-block"><div className="brand-mark"><Sparkles size={18} strokeWidth={2.5} /></div><div><strong>Grace Assembly</strong><span>Church workspace</span></div><button className="icon-button close-menu" onClick={() => setMobileOpen(false)} aria-label="Close navigation"><X size={18} /></button></div><div className="branch-switcher"><span className="branch-dot" /><div><small>Current branch</small><strong>Grace Assembly HQ</strong></div><ChevronDown size={15} /></div><nav className="main-nav" aria-label="Main navigation">{navGroups.map((group) => <div key={group.label}><p className={`nav-label ${group.label !== 'Workspace' ? 'nav-label-spaced' : ''}`}>{group.label}</p>{group.items.map(({ label, icon: Icon }) => label === 'Pastoral care' && !canSeePastoral ? null : <button key={label} className={`nav-item ${page === label ? 'active' : ''}`} onClick={() => { setPage(label); setMobileOpen(false); }}><Icon size={18} /><span>{label}</span>{label === 'People' && <em>148</em>}</button>)}</div>)}</nav><div className="sidebar-bottom"><div className="tip-card"><div className="tip-icon"><Sparkles size={15} /></div><strong>Small steps, lasting impact.</strong><span>Every record helps your team care better.</span></div><button className="nav-item"><Settings size={18} /><span>Settings</span></button><button className="nav-item" onClick={onSignOut}><LogOut size={18} /><span>Sign out</span></button><div className="profile-mini"><div className="avatar avatar-dark">MC</div><div><strong>Church administrator</strong><span>Secure workspace</span></div><MoreHorizontal size={17} /></div></div></aside>{mobileOpen && <button className="sidebar-backdrop" onClick={() => setMobileOpen(false)} aria-label="Close navigation overlay" />}</>;
-}
-
-function Overview({ events, members, followUps, onViewPeople, onNavigate }: { events: EventItem[]; members: Member[]; followUps: FollowUp[]; onViewPeople: () => void; onNavigate: (page: Page) => void }) {
-  return <><section className="metric-grid"><MetricCard label="Total members" value="4,850" change="12.8%" positive icon={<Users size={19} />} tone="mint" /><MetricCard label="Active this month" value="4,120" change="8.4%" positive icon={<Activity size={19} />} tone="blue" /><MetricCard label="Monthly giving" value="GHS 245k" change="6.2%" positive icon={<CircleDollarSign size={19} />} tone="sand" /><MetricCard label="Open follow-ups" value={String(followUps.length || 34)} change="4.1%" positive={false} icon={<HeartHandshake size={19} />} tone="rose" /></section><section className="content-grid"><div className="panel chart-panel"><div className="panel-heading"><div><span className="eyebrow">Community pulse</span><h2>Attendance overview</h2></div><button className="select-button">Last 6 months <ChevronDown size={14} /></button></div><div className="chart-summary"><strong>2,950</strong><span><ArrowUpRight size={13} /> 14.6% <small>vs last period</small></span></div><div className="chart"><div className="chart-y"><span>3.0k</span><span>2.0k</span><span>1.0k</span><span>0</span></div><div className="chart-area"><div className="chart-grid-lines"><i /><i /><i /><i /></div><svg viewBox="0 0 700 230" preserveAspectRatio="none" aria-label="Attendance trend chart"><defs><linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#55c7a7" stopOpacity=".35" /><stop offset="100%" stopColor="#55c7a7" stopOpacity="0" /></linearGradient></defs><path d="M0 178 C50 150, 76 164, 112 143 S170 135, 205 144 S260 92, 308 110 S350 125, 390 92 S448 75, 490 95 S540 62, 580 70 S635 31, 700 42 L700 230 L0 230 Z" fill="url(#chart-fill)" /><path d="M0 178 C50 150, 76 164, 112 143 S170 135, 205 144 S260 92, 308 110 S350 125, 390 92 S448 75, 490 95 S540 62, 580 70 S635 31, 700 42" fill="none" stroke="#42b594" strokeWidth="3" vectorEffect="non-scaling-stroke" /></svg><div className="chart-x"><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span><span>Sep</span><span>Oct</span></div></div></div></div><div className="panel attention-panel"><div className="panel-heading"><div><span className="eyebrow">Needs attention</span><h2>Follow-ups</h2></div><button className="text-button" onClick={() => onNavigate('Pastoral care')}>View all <ArrowUpRight size={14} /></button></div><div className="follow-list">{followUps.slice(0, 4).map((item, index) => <FollowItem key={item.id} initials={['KA', 'AM', 'YD', 'EA'][index] ?? 'FC'} name={item.title.split(' · ')[1] ?? item.title} detail={item.category} time={item.status === 'pending' ? 'Needs action' : item.status} color={['gold', 'blue', 'rose', 'mint'][index] ?? 'mint'} />)}</div><button className="wide-soft-button" onClick={() => onNavigate('Pastoral care')}><Plus size={15} /> Create follow-up</button></div></section><section className="lower-grid"><div className="panel members-panel"><div className="panel-heading"><div><span className="eyebrow">People</span><h2>Recently added</h2></div><button className="text-button" onClick={onViewPeople}>View directory <ArrowUpRight size={14} /></button></div><div className="member-table">{members.slice(0, 4).map((member) => <MemberRow key={member.id} member={member} />)}</div></div><div className="panel events-panel"><div className="panel-heading"><div><span className="eyebrow">Coming up</span><h2>Next events</h2></div><button className="text-button" onClick={() => onNavigate('Events')}>Calendar <ArrowUpRight size={14} /></button></div><div className="event-list">{events.slice(0, 3).map((event) => <EventRow key={event.id} event={event} />)}</div></div></section></>;
-}
-
-function MetricCard({ label, value, change, positive, icon, tone }: { label: string; value: string; change: string; positive: boolean; icon: ReactNode; tone: string }) { return <div className={`metric-card tone-${tone}`}><div className="metric-top"><div className="metric-icon">{icon}</div><span className={positive ? 'positive' : 'negative'}>{positive ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}{change}</span></div><span className="metric-label">{label}</span><strong>{value}</strong><div className="metric-spark"><span /><span /><span /><span /><span /><span /><span /></div></div>; }
-function FollowItem({ initials, name, detail, time, color }: { initials: string; name: string; detail: string; time: string; color: string }) { return <div className="follow-item"><div className={`avatar avatar-${color}`}>{initials}</div><div><strong>{name}</strong><span>{detail}</span></div><time>{time}</time></div>; }
-function MemberRow({ member }: { member: Member }) { return <div className="member-row"><div className="avatar member-avatar">{member.first_name[0]}{member.last_name[0]}</div><div className="member-info"><strong>{member.first_name} {member.last_name}</strong><span>{member.email ?? 'No email added'}</span></div><span className={`status-pill status-${member.membership_status}`}>{member.membership_status}</span><button className="icon-button subtle" aria-label={`More options for ${member.first_name}`}><MoreHorizontal size={17} /></button></div>; }
-function EventRow({ event }: { event: EventItem }) { const date = new Date(event.starts_at); return <div className="event-row"><div className="date-block"><strong>{date.toLocaleDateString('en-US', { day: '2-digit' })}</strong><span>{date.toLocaleDateString('en-US', { month: 'short' })}</span></div><div><strong>{event.title}</strong><span><Clock3 size={13} /> {date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} · {event.location ?? 'Location TBC'}</span></div><ChevronDown size={16} className="event-arrow" /></div>; }
-function PeoplePage({ members, search, setSearch, onAdd }: { members: Member[]; search: string; setSearch: (value: string) => void; onAdd: () => void }) { return <section className="page-panel"><div className="toolbar"><div className="input-search"><Search size={17} /><input id="global-search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search people" /></div><button className="button button-ghost"><Filter size={16} /> Filters</button><button className="button button-primary" onClick={onAdd}><Plus size={16} /> Add member</button></div><div className="directory-head"><span>Name</span><span>Contact</span><span>Status</span><span>Branch</span><span /></div>{members.map((member) => <div className="directory-row" key={member.id}><div className="directory-name"><div className="avatar member-avatar">{member.first_name[0]}{member.last_name[0]}</div><strong>{member.first_name} {member.last_name}</strong></div><span>{member.email ?? 'Not added'}</span><span className={`status-pill status-${member.membership_status}`}>{member.membership_status}</span><span>{member.branch_id === 'east' ? 'East Campus' : member.branch_id === 'north' ? 'North Campus' : 'Grace Assembly HQ'}</span><button className="icon-button subtle" aria-label={`More options for ${member.first_name}`}><MoreHorizontal size={17} /></button></div>)}</section>; }
-function AttendancePage({ sessions, onCreate }: { sessions: AttendanceSession[]; onCreate: (title: string, type: string) => Promise<void> }) { const [showForm, setShowForm] = useState(false); return <section className="page-panel"><div className="toolbar"><div><span className="eyebrow">Record keeping</span><h2 className="toolbar-title">Attendance sessions</h2></div><button className="button button-primary" onClick={() => setShowForm((value) => !value)}><Plus size={16} /> New session</button></div>{showForm && <InlineForm onCancel={() => setShowForm(false)} onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); await onCreate(String(form.get('title') ?? ''), String(form.get('type') ?? 'service')); setShowForm(false); }} fields={[['title', 'Session name', 'Sunday Celebration Service'], ['type', 'Session type', 'Sunday service']]} submitLabel="Create session" />}<div className="module-list">{sessions.map((item) => <div className="module-row" key={item.id}><div className="module-icon"><ClipboardCheck size={18} /></div><div className="module-main"><strong>{item.title}</strong><span>{item.session_type} · {new Date(item.session_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span></div><div className="module-stat"><strong>{item.expected_count}</strong><span>expected</span></div><button className="button button-ghost compact">Open check-in <ArrowUpRight size={14} /></button></div>)}</div></section>; }
-function EventsPage({ events }: { events: EventItem[] }) { return <section className="page-panel"><div className="toolbar"><div><span className="eyebrow">October 2026</span><h2 className="toolbar-title">Your event calendar</h2></div><button className="button button-primary"><Plus size={16} /> Create event</button></div><div className="event-page-grid">{events.map((event) => <div className="event-card" key={event.id}><div className="event-card-top"><span className="event-type">{event.event_type}</span><MoreHorizontal size={18} /></div><h3>{event.title}</h3><p><CalendarDays size={15} /> {new Date(event.starts_at).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p><p><Clock3 size={15} /> {new Date(event.starts_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} · {event.location ?? 'Location TBC'}</p><div className="event-card-footer"><span><Users size={15} /> {event.attendee_count} expected</span><button className="text-button">Details <ArrowUpRight size={14} /></button></div></div>)}</div></section>; }
-function FinancePage() { return <section className="finance-layout"><div className="finance-hero"><div><span className="eyebrow">October giving</span><h2>GHS 245,000</h2><p>Steady generosity across every branch this month.</p></div><div className="finance-orb"><CircleDollarSign size={34} /></div></div><div className="panel finance-breakdown"><div className="panel-heading"><div><span className="eyebrow">Giving overview</span><h2>Where it is coming from</h2></div><button className="select-button">This month <ChevronDown size={14} /></button></div><div className="bar-list"><Bar label="Tithe" amount="GHS 145,200" width="84%" color="green" /><Bar label="Offering" amount="GHS 58,400" width="62%" color="blue" /><Bar label="Missions" amount="GHS 26,900" width="38%" color="gold" /><Bar label="Building fund" amount="GHS 14,500" width="24%" color="rose" /></div></div><div className="panel quick-actions"><span className="eyebrow">Finance tools</span><h2>Keep the record clear.</h2><p>Capture giving, review expenses, and share accurate reports with your leadership team.</p><button className="button button-primary">Record giving <Plus size={16} /></button></div></section>; }
-function Bar({ label, amount, width, color }: { label: string; amount: string; width: string; color: string }) { return <div className="bar-item"><div><span>{label}</span><strong>{amount}</strong></div><div className="bar-track"><i className={`bar-${color}`} style={{ width }} /></div></div>; }
-function CommunicationsPage({ campaigns, onCreate }: { campaigns: Campaign[]; onCreate: (name: string, channel: string, audience: string, message: string) => Promise<void> }) { const [showForm, setShowForm] = useState(false); return <section className="page-panel"><div className="toolbar"><div><span className="eyebrow">Reach your church</span><h2 className="toolbar-title">Communication center</h2></div><button className="button button-primary" onClick={() => setShowForm((value) => !value)}><Plus size={16} /> New campaign</button></div><div className="communication-summary"><SummaryChip icon={<Send size={16} />} value="42" label="Sent this week" /><SummaryChip icon={<FileText size={16} />} value="8" label="Saved templates" /><SummaryChip icon={<Users size={16} />} value="6" label="Audiences" /></div>{showForm && <InlineForm onCancel={() => setShowForm(false)} onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); await onCreate(String(form.get('name') ?? ''), String(form.get('channel') ?? 'Email'), String(form.get('audience') ?? 'Entire church'), String(form.get('message') ?? '')); setShowForm(false); }} fields={[['name', 'Campaign name', 'Sunday service update'], ['channel', 'Channel', 'Email'], ['audience', 'Audience', 'Entire church'], ['message', 'Message', 'Write your message here.']]} submitLabel="Save campaign" />}<div className="module-list">{campaigns.map((item) => <div className="module-row" key={item.id}><div className="module-icon"><MessageSquareText size={18} /></div><div className="module-main"><strong>{item.name}</strong><span>{item.channel} · {item.audience}</span></div><span className={`status-pill status-${item.status}`}>{item.status}</span><div className="module-stat"><strong>{item.sent_count}</strong><span>delivered</span></div><button className="icon-button subtle" aria-label={`More options for ${item.name}`}><MoreHorizontal size={17} /></button></div>)}</div></section>; }
-function SummaryChip({ icon, value, label }: { icon: ReactNode; value: string; label: string }) { return <div className="summary-chip"><div>{icon}</div><strong>{value}</strong><span>{label}</span></div>; }
-function PastoralPage({ canSee }: { canSee: boolean }) { const [showForm, setShowForm] = useState(false); if (!canSee) return <RestrictedPanel />; return <section className="page-panel"><div className="toolbar"><div><span className="eyebrow"><LockKeyhole size={13} /> Restricted care workspace</span><h2 className="toolbar-title">Pastoral care</h2></div><button className="button button-primary" onClick={() => setShowForm((value) => !value)}><Plus size={16} /> Add care record</button></div><div className="care-banner"><HeartHandshake size={20} /><div><strong>Care records are protected.</strong><span>Only assigned pastoral care and administrator roles can view this information.</span></div></div>{showForm && <InlineForm onCancel={() => setShowForm(false)} onSubmit={(event) => { event.preventDefault(); setShowForm(false); }} fields={[['title', 'Record title', 'Pastoral visit · Member name'], ['type', 'Record type', 'Visit'], ['notes', 'Private notes', 'Keep sensitive details here.']]} submitLabel="Save care record" />}<div className="care-grid"><CareCard icon={<HeartHandshake size={19} />} title="34" label="Open follow-ups" tone="mint" /><CareCard icon={<Clock3 size={19} />} title="12" label="Visits this month" tone="gold" /><CareCard icon={<CheckCircle2 size={19} />} title="86%" label="Follow-up completion" tone="blue" /></div><div className="empty-state"><ShieldCheck size={25} /><strong>Keep care personal and accountable.</strong><span>Create a record after a visit or counselling session to keep the care journey clear.</span></div></section>; }
-function CareCard({ icon, title, label, tone }: { icon: ReactNode; title: string; label: string; tone: string }) { return <div className={`care-card care-${tone}`}><div>{icon}</div><strong>{title}</strong><span>{label}</span></div>; }
-function RestrictedPanel() { return <section className="page-panel restricted-panel"><div className="restricted-icon"><LockKeyhole size={24} /></div><h2>Pastoral care is restricted</h2><p>Your account does not have the pastoral care permission. Ask an administrator to assign the Pastoral Care role.</p><button className="button button-ghost">Back to overview</button></section>; }
-function ReportsPage({ onExport }: { onExport: () => void }) { return <section className="page-panel"><div className="toolbar"><div><span className="eyebrow">Decision support</span><h2 className="toolbar-title">Reports & dashboards</h2></div><button className="button button-ghost" onClick={onExport}><Download size={16} /> Export CSV</button></div><div className="report-grid"><ReportCard icon={<Users size={19} />} title="Membership health" description="Growth, active members, visitors, and branch distribution." value="4,850" detail="Total members" /><ReportCard icon={<ClipboardCheck size={19} />} title="Attendance trends" description="Service attendance, visitor patterns, and frequency." value="2,950" detail="Average attendance" /><ReportCard icon={<CircleDollarSign size={19} />} title="Giving summary" description="Giving by category, branch, period, and payment method." value="GHS 245k" detail="This month" /><ReportCard icon={<HeartHandshake size={19} />} title="Care outcomes" description="Open follow-ups, completion rate, and response time." value="86%" detail="Completed" /></div><div className="report-note"><Database size={18} /><div><strong>Reports are built from live records.</strong><span>Choose a date range and branch once the underlying activity data is entered. Exports respect your assigned permissions.</span></div></div></section>; }
-function ReportCard({ icon, title, description, value, detail }: { icon: ReactNode; title: string; description: string; value: string; detail: string }) { return <div className="report-card"><div className="report-card-icon">{icon}</div><h3>{title}</h3><p>{description}</p><strong>{value}</strong><span>{detail}</span><button className="text-button">Open report <ArrowUpRight size={14} /></button></div>; }
-function AdministrationPage({ roles, onNotify }: { roles: string[]; onNotify: (message: string) => void }) { return <section className="page-panel"><div className="toolbar"><div><span className="eyebrow">System control</span><h2 className="toolbar-title">Administration</h2></div><button className="button button-primary" onClick={() => onNotify('Configuration changes are saved securely')}><Check size={16} /> Save changes</button></div><div className="admin-grid"><AdminCard icon={<UserCog size={20} />} title="Roles & permissions" text="Assign granular access by responsibility, branch, and ministry." action="Manage roles" onClick={() => onNotify('Role manager is ready for your configuration')} /><AdminCard icon={<BriefcaseBusiness size={20} />} title="Church structure" text="Manage branches, departments, ministries, and groups." action="Open structure" onClick={() => onNotify('Structure settings are ready')} /><AdminCard icon={<Bell size={20} />} title="Notifications" text="Choose in-app, email, SMS, and automated reminder settings." action="Configure alerts" onClick={() => onNotify('Notification settings are ready')} /><AdminCard icon={<Database size={20} />} title="Data & privacy" text="Review retention, exports, backups, and activity logging." action="Review controls" onClick={() => onNotify('Privacy controls are ready')} /></div><div className="role-strip"><ShieldCheck size={18} /><div><strong>Current access: {roles.map((role) => role.replace('_', ' ')).join(', ') || 'standard user'}</strong><span>Permission checks happen in the database, not only in the interface.</span></div></div></section>; }
-function AdminCard({ icon, title, text, action, onClick }: { icon: ReactNode; title: string; text: string; action: string; onClick: () => void }) { return <div className="admin-card"><div className="admin-icon">{icon}</div><h3>{title}</h3><p>{text}</p><button className="text-button" onClick={onClick}>{action} <ArrowUpRight size={14} /></button></div>; }
-function InlineForm({ fields, submitLabel, onSubmit, onCancel }: { fields: string[][]; submitLabel: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>; onCancel: () => void }) { return <form className="inline-form" onSubmit={onSubmit}>{fields.map(([name, label, placeholder]) => <label key={name}>{label}{name === 'notes' || name === 'message' ? <textarea name={name} required placeholder={placeholder} /> : <input name={name} required placeholder={placeholder} />}</label>)}<div className="form-actions"><button type="button" className="button button-ghost" onClick={onCancel}>Cancel</button><button type="submit" className="button button-primary">{submitLabel} <Check size={15} /></button></div></form>; }
-function MemberModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void> }) { return <div className="modal-layer" role="dialog" aria-modal="true"><div className="modal-card"><div className="modal-header"><div><span className="eyebrow">People</span><h2>Add a new member</h2></div><button className="icon-button" onClick={onClose} aria-label="Close dialog"><X size={19} /></button></div><p className="modal-copy">Start with the essentials. You can complete their profile later.</p><form onSubmit={onSubmit}><label>First name<input name="first_name" required placeholder="e.g. Daniel" /></label><label>Last name<input name="last_name" required placeholder="e.g. Boateng" /></label><label>Email address<input name="email" type="email" placeholder="name@example.com" /></label><div className="form-actions"><button type="button" className="button button-ghost" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary"><Check size={16} /> Save member</button></div></form></div></div>; }
 
 export default App;
