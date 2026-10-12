@@ -40,7 +40,11 @@ npm run build
 Without Supabase configuration, the app opens in a clearly labelled preview
 mode. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in a local `.env`
 file to enable authentication and connect the existing Supabase migrations.
-Never put a Supabase service-role key in the browser application.
+Never put a Supabase service-role key in the browser application. When Supabase
+is not configured, supported workflows use browser-local preview data that is
+not synced to a server or shared across browsers. Preview storage is not a
+secure place for confidential information; do not enter real pastoral-care or
+financial data there.
 
 ## Phased delivery
 
@@ -77,19 +81,44 @@ their own submissions. `20261010015000_phase6_finance.sql` adds finance records,
 role grants, validation, and the expense-review function.
 
 Do not apply the migration chain yet: the Phase 1 migration currently recreates
-tables already introduced by earlier foundation migrations, so compatibility
-must be reconciled before database setup. Without Supabase configuration, these
-workspaces remain read-only previews.
+tables already introduced by earlier foundation migrations, so compatibility must be reconciled before database setup. Without Supabase
+configuration, people, visitor, household, structure, attendance, event,
+communications, and pastoral-care workflows can be tried with local-only
+preview data. Finance and account administration remain unavailable in preview.
 
-**Phase 7 — Communications (just implemented):** create reusable message
+**Phase 7 — Communications (implemented):** create reusable message
 templates by channel (email, SMS, push), draft and schedule audience-targeted
 campaigns, track delivery metrics (sent, opened, clicked), and manage campaign
 history. `20261010017000_phase7_communications.sql` enhances template and
 campaign tables with audience targeting, delivery tracking, and indexed lookups
 for performance.
 
-**Next phases:** restricted pastoral workflows; then reporting, administration,
-and production readiness.
+**Phase 8 — Pastoral care (implemented):** create sensitive pastoral care
+records with privacy levels, track prayer and counselling notes, and manage
+care follow-ups with due dates and status changes. Care records and follow-ups
+carry branch scope with permission-checked RLS; pastor and pastoral-care roles
+receive the required permissions. `20261010018000_phase8_pastoral_care.sql`
+adds branch validation, targeted indexes, and organization/branch-scoped access.
+Local preview care notes and follow-ups are saved only in browser storage and
+must not contain real confidential or sensitive information.
+
+**Phase 9 — Reports (implemented):** review membership, visitor, attendance,
+event, registration, and permission-gated finance summaries by date range and
+branch, with CSV export of aggregate figures.
+
+**Phase 10 — Administration (implemented):** manage existing organization
+accounts, update their profile status, assign branch-scoped roles, edit
+permitted role capabilities, review organization branches, and inspect a
+permission-gated audit trail. Profile status is not a Supabase authentication
+ban; inviting users or revoking sign-in requires a trusted server-side admin
+integration. Role and account mutations are guarded by
+organization-scoped RLS policies; privileged system roles and permissions are
+reserved for super administrators. `20261010019000_phase10_administration.sql`
+adds these policies and audit triggers.
+
+**Remaining: 1 phase.** Phase 11 — Production hardening (migration
+reconciliation, security review, test coverage, monitoring, backups, and
+deployment readiness).
 
 Pastoral and financial data requires server-side authorization and organization
 and branch scoping before production use. Any production rollout also needs

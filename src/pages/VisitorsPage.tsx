@@ -3,11 +3,13 @@ import type { FormEvent } from 'react';
 import { Icon } from '../components/Icon';
 import { PageHeading } from '../components/PageHeading';
 import { getCurrentOrganization, type WorkspaceOrganization } from '../data/workspace';
+import { createPreviewId, getPreviewOrganization, readPreviewRows, writePreviewRows } from '../data/previewStore';
 import { supabase } from '../supabase';
 
 type ContactMethod = 'in_person' | 'phone' | 'email' | 'whatsapp' | 'none';
 type Visitor = {
   id: string;
+  organization_id?: string;
   branch_id: string | null;
   first_name: string;
   last_name: string;
@@ -21,6 +23,7 @@ type Visitor = {
 };
 type FollowUp = {
   id: string;
+  organization_id?: string;
   member_id: string;
   title: string;
   due_date: string;
@@ -61,6 +64,8 @@ function dateLabel(date: string) {
 export function VisitorsPage({ onAction }: { onAction: (message: string) => void }) {
   const [organization, setOrganization] = useState<WorkspaceOrganization | null>(null);
   const [visitors, setVisitors] = useState<VisitorView[]>([]);
+  const [people, setPeople] = useState<{ id: string; first_name: string; last_name: string }[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string; status?: string }[]>([]);
   const [loading, setLoading] = useState(Boolean(supabase));
   const [loadError, setLoadError] = useState('');
   const [dialogMode, setDialogMode] = useState<'intake' | 'follow-up' | 'consent' | null>(null);
@@ -73,7 +78,24 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
   const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
-    if (!supabase) { setLoading(false); return; }
+    if (!supabase) {
+      try {
+        const rows = readPreviewRows<Visitor>('members').filter((row) => row.membership_status === 'visitor' || row.membership_status === 'newcomer');
+        const followUps = readPreviewRows<FollowUp>('visitor_follow_ups');
+        const localPeople = readPreviewRows<{ id: string; first_name: string; last_name: string }>('members');
+        setOrganization(getPreviewOrganization());
+        setPeople(localPeople);
+        setBranches(readPreviewRows<{ id: string; name: string; status?: string }>('branches').filter((branch) => branch.status !== 'inactive'));
+        setVisitors(rows.map((visitor) => ({
+          ...visitor,
+          followUps: followUps.filter((task) => task.member_id === visitor.id),
+        })).sort((a, b) => b.first_visit_date.localeCompare(a.first_visit_date)));
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load preview visitor records.');
+      }
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError('');
     try {
@@ -157,13 +179,10 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
 
   const submitIntake = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization) {
-      setFormError('Connect your church workspace before recording a visitor.');
-      return;
-    }
+    if (!organization) { setFormError('The church workspace is not available yet.'); return; }
     setSaving(true);
     setFormError('');
-    const { data, error } = await supabase.from('members').insert({
+    const payload = {
       organization_id: organization.id,
       branch_id: visitorForm.branch_id || null,
       first_name: visitorForm.first_name.trim(),
@@ -176,11 +195,25 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
       visit_source: visitorForm.visit_source.trim() || null,
       contact_preference: visitorForm.contact_preference,
       contact_consent: visitorForm.contact_consent,
-    }).select('id').single();
-    if (error || !data) {
-      setFormError(`Could not save visitor: ${error?.message ?? 'No visitor record was returned.'}`);
-      setSaving(false);
-      return;
+    };
+    if (supabase) {
+      const { error } = await supabase.from('members').insert(payload).select('id').single();
+      if (error) {
+        setFormError(`Could not save visitor: ${error.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      try {
+        writePreviewRows('members', [...readPreviewRows<Record<string, unknown> & Visitor>('members'), {
+          ...payload, id: createPreviewId(), joined_at: visitorForm.first_visit_date, membership_number: null,
+          gender: null, date_of_birth: null, baptism_date: null, address: null, city: null, notes: null,
+        }]);
+      } catch (error) {
+        setFormError(error instanceof Error ? error.message : 'Could not save preview visitor.');
+        setSaving(false);
+        return;
+      }
     }
     setDialogMode(null);
     setSaving(false);
@@ -190,17 +223,23 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
 
   const updateContactConsent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !activeVisitor) return;
+    if (!activeVisitor) return;
     setSaving(true);
     setFormError('');
-    const { error } = await supabase.from('members').update({
-      contact_preference: visitorForm.contact_preference,
-      contact_consent: visitorForm.contact_consent,
-    }).eq('id', activeVisitor.id);
-    if (error) {
-      setFormError(`Could not update contact preferences: ${error.message}`);
-      setSaving(false);
-      return;
+    if (supabase) {
+      const { error } = await supabase.from('members').update({
+        contact_preference: visitorForm.contact_preference,
+        contact_consent: visitorForm.contact_consent,
+      }).eq('id', activeVisitor.id);
+      if (error) {
+        setFormError(`Could not update contact preferences: ${error.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      writePreviewRows('members', readPreviewRows<Visitor>('members').map((row) => row.id === activeVisitor.id
+        ? { ...row, contact_preference: visitorForm.contact_preference, contact_consent: visitorForm.contact_consent }
+        : row));
     }
     setDialogMode(null);
     setSaving(false);
@@ -210,20 +249,14 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
 
   const submitFollowUp = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization || !activeVisitor) return;
+    if (!organization || !activeVisitor) return;
     if (followUpForm.contact_method !== 'in_person' && !activeVisitor.contact_consent) {
       setFormError('This visitor has not consented to external contact. Choose an in-person follow-up.');
       return;
     }
     setSaving(true);
     setFormError('');
-    const { data: userData, error: userError } = await supabase.auth.getUser();
-    if (userError || !userData.user) {
-      setFormError(`Could not identify the assigned team member: ${userError?.message ?? 'No signed-in user.'}`);
-      setSaving(false);
-      return;
-    }
-    const { error } = await supabase.from('visitor_follow_ups').insert({
+    const payload = {
       organization_id: organization.id,
       branch_id: activeVisitor.branch_id,
       member_id: activeVisitor.id,
@@ -231,12 +264,25 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
       due_date: followUpForm.due_date,
       contact_method: followUpForm.contact_method,
       notes: followUpForm.notes.trim() || null,
-      assigned_to: userData.user.id,
-    });
-    if (error) {
-      setFormError(`Could not create follow-up: ${error.message}`);
-      setSaving(false);
-      return;
+      assigned_to: null,
+    };
+    if (supabase) {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        setFormError(`Could not identify the assigned team member: ${userError?.message ?? 'No signed-in user.'}`);
+        setSaving(false);
+        return;
+      }
+      const { error } = await supabase.from('visitor_follow_ups').insert({ ...payload, assigned_to: userData.user.id });
+      if (error) {
+        setFormError(`Could not create follow-up: ${error.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      writePreviewRows('visitor_follow_ups', [...readPreviewRows<FollowUp>('visitor_follow_ups'), {
+        ...payload, id: createPreviewId(), status: 'pending', created_at: new Date().toISOString(),
+      }]);
     }
     setDialogMode(null);
     setSaving(false);
@@ -245,7 +291,11 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
   };
 
   const setFollowUpStatus = async (task: FollowUp, status: FollowUp['status']) => {
-    if (!supabase) return;
+    if (!supabase) {
+      writePreviewRows('visitor_follow_ups', readPreviewRows<FollowUp>('visitor_follow_ups').map((row) => row.id === task.id ? { ...row, status } : row));
+      await load();
+      return;
+    }
     const { error } = await supabase.from('visitor_follow_ups')
       .update({ status, completed_at: status === 'completed' ? new Date().toISOString() : null })
       .eq('id', task.id);
@@ -258,7 +308,12 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
   };
 
   const promoteToNewcomer = async (visitor: VisitorView) => {
-    if (!supabase) return;
+    if (!supabase) {
+      writePreviewRows('members', readPreviewRows<Visitor>('members').map((row) => row.id === visitor.id ? { ...row, membership_status: 'newcomer' } : row));
+      onAction(`${visitor.first_name} ${visitor.last_name} moved to newcomer.`);
+      await load();
+      return;
+    }
     const { error } = await supabase.from('members').update({ membership_status: 'newcomer' }).eq('id', visitor.id);
     if (error) {
       onAction(`Could not update visitor journey: ${error.message}`);
@@ -280,7 +335,7 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
       <section className="visitor-panel glass-card">
         <div className="people-directory-heading"><div><span className="eyebrow">First impressions & belonging</span>
           <h2>Welcome journeys</h2><p>Record visits, respect contact preferences, and make the next personal welcome visible.</p></div>
-          <button className="button button-primary" type="button" disabled={!supabase} onClick={openIntake}><Icon name="user-plus" size={15} /> Record visitor</button></div>
+          <button className="button button-primary" type="button" onClick={openIntake}><Icon name="user-plus" size={15} /> Record visitor</button></div>
         {!supabase && <div className="people-notice" role="status"><Icon name="database" size={17} /><span>Preview only. Connect Supabase to manage visitor records and follow-up tasks.</span></div>}
         {loadError && <div className="people-error" role="alert">{loadError}<button className="text-button" onClick={() => void load()}>Retry</button></div>}
         <div className="people-toolbar">
@@ -302,7 +357,7 @@ export function VisitorsPage({ onAction }: { onAction: (message: string) => void
               <div className="visitor-card-actions">
                 {visitor.membership_status === 'visitor' && <button className="button button-ghost" type="button" onClick={() => void promoteToNewcomer(visitor)}>Mark newcomer</button>}
                 <button className="button button-ghost" type="button" onClick={() => openConsent(visitor)}>Contact consent</button>
-                <button className="button button-primary" type="button" disabled={!supabase} onClick={() => openFollowUp(visitor)}><Icon name="plus" size={14} /> Add follow-up</button>
+                <button className="button button-primary" type="button" onClick={() => openFollowUp(visitor)}><Icon name="plus" size={14} /> Add follow-up</button>
               </div>
             </div>
             <div className="visitor-followups">

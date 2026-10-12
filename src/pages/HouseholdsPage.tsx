@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { Icon } from '../components/Icon';
 import { PageHeading } from '../components/PageHeading';
 import { getCurrentOrganization, type WorkspaceOrganization } from '../data/workspace';
+import { createPreviewId, getPreviewOrganization, readPreviewRows, writePreviewRows } from '../data/previewStore';
 import { supabase } from '../supabase';
 
 type Household = {
@@ -39,7 +40,30 @@ export function HouseholdsPage({ onAction }: { onAction: (message: string) => vo
   const [form, setForm] = useState<HouseholdForm>(initialForm);
 
   const load = useCallback(async () => {
-    if (!supabase) { setLoading(false); return; }
+    if (!supabase) {
+      try {
+        const localHouseholds = readPreviewRows<Household>('households');
+        const relations = readPreviewRows<HouseholdMember>('household_members');
+        const localPeople = readPreviewRows<Person>('members');
+        const branches = readPreviewRows<{ id: string; name: string; status?: string }>('branches').filter((branch) => branch.status !== 'inactive');
+        const peopleById = new Map(localPeople.map((person) => [person.id, person]));
+        setOrganization(getPreviewOrganization(branches));
+        setPeople(localPeople);
+        const result = localHouseholds.map((household) => ({
+          ...household,
+          people: relations.flatMap((relation) => {
+            const person = peopleById.get(relation.member_id);
+            return relation.household_id === household.id && person ? [{ ...relation, person }] : [];
+          }),
+        }));
+        setHouseholds(result);
+        setSelectedId((current) => result.some((household) => household.id === current) ? current : result[0]?.id ?? '');
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load preview households.');
+      }
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError('');
     try {
@@ -114,10 +138,7 @@ export function HouseholdsPage({ onAction }: { onAction: (message: string) => vo
 
   const updateHousehold = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization) {
-      setFormError('Connect your church workspace before saving household records.');
-      return;
-    }
+    if (!organization) { setFormError('The church workspace is not available yet.'); return; }
     setSaving(true);
     setFormError('');
     if (dialogMode === 'add-person' && selected) {
@@ -126,16 +147,27 @@ export function HouseholdsPage({ onAction }: { onAction: (message: string) => vo
         setSaving(false);
         return;
       }
-      const { error } = await supabase.from('household_members').insert({
+      const relationship = {
         household_id: selected.id,
         member_id: form.member_id,
         relationship: form.relationship,
         is_primary: form.is_primary,
-      });
-      if (error) {
-        setFormError(error.code === '23505' ? 'That person is already linked to this household.' : `Could not add the household relationship: ${error.message}`);
-        setSaving(false);
-        return;
+      };
+      if (supabase) {
+        const { error } = await supabase.from('household_members').insert(relationship);
+        if (error) {
+          setFormError(error.code === '23505' ? 'That person is already linked to this household.' : `Could not add the household relationship: ${error.message}`);
+          setSaving(false);
+          return;
+        }
+      } else {
+        const relations = readPreviewRows<HouseholdMember>('household_members');
+        if (relations.some((item) => item.household_id === selected.id && item.member_id === form.member_id)) {
+          setFormError('That person is already linked to this household.');
+          setSaving(false);
+          return;
+        }
+        writePreviewRows('household_members', [...relations, { ...relationship, id: createPreviewId() }]);
       }
       setDialogOpen(false);
       setSaving(false);
@@ -143,25 +175,42 @@ export function HouseholdsPage({ onAction }: { onAction: (message: string) => vo
       await load();
       return;
     }
-    const { data, error } = await supabase.from('households').insert({
-      organization_id: organization.id,
+    const payload = {
       branch_id: form.branch_id || null,
       name: form.name.trim(),
-    }).select('id').single();
-    if (error || !data) {
-      setFormError(`Could not create household: ${error?.message ?? 'No household was returned.'}`);
-      setSaving(false);
-      return;
+    };
+    let householdId = '';
+    if (supabase) {
+      const { data, error } = await supabase.from('households').insert({
+        organization_id: organization.id,
+        ...payload,
+      }).select('id').single();
+      if (error || !data) {
+        setFormError(`Could not create household: ${error?.message ?? 'No household was returned.'}`);
+        setSaving(false);
+        return;
+      }
+      householdId = data.id;
+    } else {
+      householdId = createPreviewId();
+      writePreviewRows('households', [...readPreviewRows<Household>('households'), {
+        ...payload, id: householdId, status: 'active', created_at: new Date().toISOString(),
+      }]);
     }
     setDialogOpen(false);
     setSaving(false);
     onAction(`${form.name.trim()} household created. Add people from the household details.`);
-    setSelectedId(data.id);
+    setSelectedId(householdId);
     await load();
   };
 
   const removePerson = async (relation: HouseholdMember & { person: Person }) => {
-    if (!supabase) return;
+    if (!supabase) {
+      writePreviewRows('household_members', readPreviewRows<HouseholdMember>('household_members').filter((item) => item.id !== relation.id));
+      onAction(`${relation.person.first_name} removed from household.`);
+      await load();
+      return;
+    }
     const { error } = await supabase.from('household_members').delete().eq('id', relation.id);
     if (error) {
       onAction(`Could not remove ${relation.person.first_name} from household: ${error.message}`);
@@ -172,7 +221,13 @@ export function HouseholdsPage({ onAction }: { onAction: (message: string) => vo
   };
 
   const archive = async (household: HouseholdView) => {
-    if (!supabase) return;
+    if (!supabase) {
+      const status = household.status === 'active' ? 'archived' : 'active';
+      writePreviewRows('households', readPreviewRows<Household>('households').map((item) => item.id === household.id ? { ...item, status } : item));
+      onAction(`${household.name} household ${status === 'archived' ? 'archived' : 'restored'}.`);
+      await load();
+      return;
+    }
     const status = household.status === 'active' ? 'archived' : 'active';
     const { error } = await supabase.from('households').update({ status }).eq('id', household.id);
     if (error) {
@@ -195,7 +250,7 @@ export function HouseholdsPage({ onAction }: { onAction: (message: string) => vo
       <div className="household-layout">
         <section className="household-list glass-card" aria-label="Household directory">
           <div className="household-list-heading"><div><span className="eyebrow">Families & relationships</span><h2>Households</h2></div>
-            <button className="icon-button" type="button" disabled={!supabase} aria-label="Create household" onClick={openCreate}><Icon name="plus" size={18} /></button></div>
+            <button className="icon-button" type="button" aria-label="Create household" onClick={openCreate}><Icon name="plus" size={18} /></button></div>
           <label className="people-search household-search"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find a household or person" aria-label="Search households" /></label>
           <label className="household-archived-toggle"><input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} /> Include archived</label>
           {loading && <div className="household-empty"><span className="loading-spinner" /> Loading households…</div>}
@@ -215,7 +270,7 @@ export function HouseholdsPage({ onAction }: { onAction: (message: string) => vo
               <h2>{selected.name}</h2><p>{selected.people.length} connected {selected.people.length === 1 ? 'person' : 'people'}{selected.status === 'archived' ? ' · archived' : ''}</p></div>
               <div className="people-actions"><button className="button button-ghost" type="button" onClick={() => void archive(selected)}>
                 {selected.status === 'active' ? 'Archive household' : 'Restore household'}</button>
-                {selected.status === 'active' && <button className="button button-primary" type="button" disabled={!supabase} onClick={openAddPerson}><Icon name="plus" size={15} /> Add person</button>}</div></div>
+                {selected.status === 'active' && <button className="button button-primary" type="button" onClick={openAddPerson}><Icon name="plus" size={15} /> Add person</button>}</div></div>
             <div className="household-people-list">
               {selected.people.map((relation) => <article className="household-person" key={relation.id}>
                 <span className="household-person-avatar">{relation.person.first_name.slice(0, 1)}{relation.person.last_name.slice(0, 1)}</span>
@@ -228,7 +283,7 @@ export function HouseholdsPage({ onAction }: { onAction: (message: string) => vo
             </div>
           </> : <div className="household-no-selection"><span className="household-icon"><Icon name="house" size={22} /></span><h2>Your household directory</h2>
             <p>Create a household, then connect people and describe how they are related.</p>
-            <button className="button button-primary" type="button" disabled={!supabase} onClick={openCreate}><Icon name="plus" size={15} /> Create household</button></div>}
+            <button className="button button-primary" type="button" onClick={openCreate}><Icon name="plus" size={15} /> Create household</button></div>}
         </section>
       </div>
       {!supabase && <div className="people-notice" role="status"><Icon name="database" size={17} /><span>Preview only. Connect Supabase to create household records and relationships.</span></div>}

@@ -1,8 +1,8 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
+import { createPreviewId, getPreviewOrganization, readPreviewRows, writePreviewRows } from '../data/previewStore';
 import { supabase } from '../supabase';
 import { getCurrentOrganization } from '../data/workspace';
-import type { PageId } from '../types';
 
 interface CommunicationTemplate {
   id: string;
@@ -45,7 +45,9 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
   const [org, setOrg] = useState<{ id: string; name: string } | null>(null);
   const [templates, setTemplates] = useState<CommunicationTemplate[]>([]);
   const [campaigns, setCampaigns] = useState<CommunicationCampaign[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(supabase));
+  const [loadError, setLoadError] = useState('');
+  const previewMode = !supabase;
   const [activeTab, setActiveTab] = useState<'overview' | 'templates' | 'campaigns'>('overview');
   const [showTemplateForm, setShowTemplateForm] = useState(false);
   const [showCampaignForm, setShowCampaignForm] = useState(false);
@@ -70,52 +72,54 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
+      setLoadError('');
       try {
         if (supabase) {
           const organization = await getCurrentOrganization(supabase);
-          if (organization) {
-            setOrg(organization);
-            await loadTemplates(organization.id);
-            await loadCampaigns(organization.id);
-          }
+          setOrg(organization);
+          await Promise.all([loadTemplates(organization.id), loadCampaigns(organization.id)]);
+        } else {
+          const organization = getPreviewOrganization();
+          setOrg({ id: organization.id, name: organization.name });
+          await Promise.all([loadTemplates(organization.id), loadCampaigns(organization.id)]);
         }
       } catch (error) {
-        onAction(`Error loading communications: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        setLoadError(error instanceof Error ? error.message : 'Could not load communications.');
       } finally {
         setLoading(false);
       }
     };
     void loadData();
-  }, [onAction]);
+  }, []);
 
   const loadTemplates = async (organizationId: string) => {
-    if (!supabase) return;
-    try {
-      const { data, error } = await supabase
-        .from('communication_templates')
-        .select('*')
-        .eq('organization_id', organizationId)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setTemplates((data || []) as CommunicationTemplate[]);
-    } catch (error) {
-      console.error('Error loading templates:', error);
+    if (!supabase) {
+      setTemplates(readPreviewRows<CommunicationTemplate>('communication_templates')
+        .sort((left, right) => right.created_at.localeCompare(left.created_at)));
+      return;
     }
+    const { data, error } = await supabase
+      .from('communication_templates')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(`Could not load message templates: ${error.message}`);
+    setTemplates((data || []) as CommunicationTemplate[]);
   };
 
   const loadCampaigns = async (organizationId: string) => {
-    if (!supabase) return;
-    try {
-      const { data, error } = await supabase
-        .from('communication_campaigns')
-        .select('*')
-        .eq('organization_id', organizationId)
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      setCampaigns((data || []) as CommunicationCampaign[]);
-    } catch (error) {
-      console.error('Error loading campaigns:', error);
+    if (!supabase) {
+      setCampaigns(readPreviewRows<CommunicationCampaign>('communication_campaigns')
+        .sort((left, right) => right.created_at.localeCompare(left.created_at)));
+      return;
     }
+    const { data, error } = await supabase
+      .from('communication_campaigns')
+      .select('*')
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(`Could not load campaigns: ${error.message}`);
+    setCampaigns((data || []) as CommunicationCampaign[]);
   };
 
   const handleSaveTemplate = async () => {
@@ -133,10 +137,25 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
       return;
     }
 
-    if (!supabase || !org) return;
+    if (!org) return;
 
     try {
-      if (editingTemplate) {
+      if (!supabase) {
+        const rows = readPreviewRows<CommunicationTemplate>('communication_templates');
+        const template: CommunicationTemplate = {
+          id: editingTemplate?.id ?? createPreviewId(),
+          name: templateForm.name.trim(),
+          channel: templateForm.channel,
+          subject: templateForm.subject.trim(),
+          body: templateForm.body.trim(),
+          status: editingTemplate?.status ?? 'active',
+          created_at: editingTemplate?.created_at ?? new Date().toISOString(),
+        };
+        writePreviewRows('communication_templates', editingTemplate
+          ? rows.map((row) => row.id === template.id ? template : row)
+          : [template, ...rows]);
+        onAction(`Template ${editingTemplate ? 'updated' : 'created'} in this browser's preview.`);
+      } else if (editingTemplate) {
         const { error } = await supabase
           .from('communication_templates')
           .update({
@@ -172,15 +191,19 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
   };
 
   const handleDeleteTemplate = async (id: string) => {
-    if (!supabase) return;
     if (!confirm('Delete this template? This cannot be undone.')) return;
 
     try {
-      const { error } = await supabase
-        .from('communication_templates')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
+      if (supabase) {
+        const { error } = await supabase
+          .from('communication_templates')
+          .delete()
+          .eq('id', id);
+        if (error) throw error;
+      } else {
+        writePreviewRows('communication_templates', readPreviewRows<CommunicationTemplate>('communication_templates')
+          .filter((template) => template.id !== id));
+      }
       onAction('Template deleted');
       if (org) await loadTemplates(org.id);
     } catch (error) {
@@ -203,10 +226,27 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
       return;
     }
 
-    if (!supabase || !org) return;
+    if (!org) return;
 
     try {
-      if (editingCampaign) {
+      if (!supabase) {
+        const rows = readPreviewRows<CommunicationCampaign>('communication_campaigns');
+        const campaign: CommunicationCampaign = {
+          id: editingCampaign?.id ?? createPreviewId(),
+          name: campaignForm.name.trim(),
+          channel: campaignForm.channel,
+          audience: campaignForm.audience,
+          message: campaignForm.message.trim(),
+          status: editingCampaign?.status ?? 'draft',
+          scheduled_for: campaignForm.scheduled_for || null,
+          sent_count: editingCampaign?.sent_count ?? 0,
+          created_at: editingCampaign?.created_at ?? new Date().toISOString(),
+        };
+        writePreviewRows('communication_campaigns', editingCampaign
+          ? rows.map((row) => row.id === campaign.id ? campaign : row)
+          : [campaign, ...rows]);
+        onAction(`Campaign ${editingCampaign ? 'updated' : 'created'} in this browser's preview. It was not sent.`);
+      } else if (editingCampaign) {
         const { error } = await supabase
           .from('communication_campaigns')
           .update({
@@ -244,15 +284,19 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
   };
 
   const handleDeleteCampaign = async (id: string) => {
-    if (!supabase) return;
     if (!confirm('Delete this campaign? This cannot be undone.')) return;
 
     try {
-      const { error } = await supabase
-        .from('communication_campaigns')
-        .delete()
-        .eq('id', id);
-      if (error) throw error;
+      if (supabase) {
+        const { error } = await supabase
+          .from('communication_campaigns')
+          .delete()
+          .eq('id', id);
+        if (error) throw error;
+      } else {
+        writePreviewRows('communication_campaigns', readPreviewRows<CommunicationCampaign>('communication_campaigns')
+          .filter((campaign) => campaign.id !== id));
+      }
       onAction('Campaign deleted');
       if (org) await loadCampaigns(org.id);
     } catch (error) {
@@ -269,12 +313,19 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
     return <div className="module-loading"><span className="loading-spinner" /><span>Loading communications</span></div>;
   }
 
-  if (!org) {
-    return <div className="module-error">Could not load organization. Please refresh the page.</div>;
+  if (supabase && !org) {
+    return <div className="module-error" role="alert">{loadError || 'Could not load your church organization.'}</div>;
   }
 
   return (
     <div className="communications-workspace">
+      {previewMode && (
+        <div className="preview-notice" role="status">
+          <Icon name="info" size={17} />
+          <span>Preview mode — templates and campaign drafts are stored in this browser only. No messages are sent.</span>
+        </div>
+      )}
+      {loadError && <div className="workspace-alert" role="alert">{loadError}</div>}
       <div className="module-tabs">
         <button
           className={`module-tab ${activeTab === 'overview' ? 'active' : ''}`}
@@ -340,11 +391,11 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
           </div>
 
           <div className="overview-actions">
-            <button className="action-button primary" onClick={() => { setEditingTemplate(null); setTemplateForm({ name: '', channel: 'email', subject: '', body: '' }); setShowTemplateForm(true); }}>
+            <button className="action-button primary" onClick={() => { setActiveTab('templates'); setEditingTemplate(null); setTemplateError(''); setTemplateForm({ name: '', channel: 'email', subject: '', body: '' }); setShowTemplateForm(true); }}>
               <Icon name="plus" size={17} />
               Create template
             </button>
-            <button className="action-button primary" onClick={() => { setEditingCampaign(null); setCampaignForm({ name: '', channel: 'email', audience: '', message: '', scheduled_for: '' }); setShowCampaignForm(true); }}>
+            <button className="action-button primary" onClick={() => { setActiveTab('campaigns'); setEditingCampaign(null); setCampaignError(''); setCampaignForm({ name: '', channel: 'email', audience: '', message: '', scheduled_for: '' }); setShowCampaignForm(true); }}>
               <Icon name="plus" size={17} />
               New campaign
             </button>
@@ -356,7 +407,7 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
         <div className="communications-section">
           <div className="section-header">
             <h3>Message Templates</h3>
-            <button className="action-button" onClick={() => { setEditingTemplate(null); setTemplateForm({ name: '', channel: 'email', subject: '', body: '' }); setShowTemplateForm(true); }}>
+            <button className="action-button" onClick={() => { setEditingTemplate(null); setTemplateError(''); setTemplateForm({ name: '', channel: 'email', subject: '', body: '' }); setShowTemplateForm(true); }}>
               <Icon name="plus" size={16} />
               New template
             </button>
@@ -377,7 +428,7 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
               </div>
               <div className="form-group">
                 <label>Channel</label>
-                <select value={templateForm.channel} onChange={(e) => setTemplateForm({ ...templateForm, channel: e.target.value as any })}>
+                <select value={templateForm.channel} onChange={(e) => setTemplateForm({ ...templateForm, channel: e.target.value as 'email' | 'sms' | 'push' })}>
                   <option value="email">Email</option>
                   <option value="sms">SMS</option>
                   <option value="push">Push notification</option>
@@ -474,7 +525,7 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
         <div className="communications-section">
           <div className="section-header">
             <h3>Communication Campaigns</h3>
-            <button className="action-button" onClick={() => { setEditingCampaign(null); setCampaignForm({ name: '', channel: 'email', audience: '', message: '', scheduled_for: '' }); setShowCampaignForm(true); }}>
+            <button className="action-button" onClick={() => { setEditingCampaign(null); setCampaignError(''); setCampaignForm({ name: '', channel: 'email', audience: '', message: '', scheduled_for: '' }); setShowCampaignForm(true); }}>
               <Icon name="plus" size={16} />
               New campaign
             </button>
@@ -495,7 +546,7 @@ export function CommunicationsPageImpl({ onAction }: { onAction: (message: strin
               </div>
               <div className="form-group">
                 <label>Channel</label>
-                <select value={campaignForm.channel} onChange={(e) => setCampaignForm({ ...campaignForm, channel: e.target.value as any })}>
+                <select value={campaignForm.channel} onChange={(e) => setCampaignForm({ ...campaignForm, channel: e.target.value as 'email' | 'sms' | 'push' })}>
                   <option value="email">Email</option>
                   <option value="sms">SMS</option>
                   <option value="push">Push notification</option>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Icon } from '../components/Icon';
 import { PageHeading } from '../components/PageHeading';
+import { createPreviewId, readPreviewRows, writePreviewRows } from '../data/previewStore';
 import { supabase } from '../supabase';
 
 type MembershipStatus = 'visitor' | 'newcomer' | 'member' | 'inactive';
@@ -38,7 +39,7 @@ type MemberForm = Omit<Member, 'id' | 'branch_id' | 'email' | 'phone' | 'members
 type FilterStatus = 'all' | MembershipStatus;
 
 const memberColumns = 'id,branch_id,first_name,last_name,email,phone,membership_status,joined_at,membership_number,gender,date_of_birth,baptism_date,address,city,notes';
-type Branch = { id: string; name: string };
+type Branch = { id: string; name: string; status?: 'active' | 'inactive' };
 
 const blankMember: MemberForm = {
   first_name: '',
@@ -91,6 +92,12 @@ export function PeoplePage({ onAction }: { onAction: (message: string) => void }
 
   const loadMembers = useCallback(async () => {
     if (!supabase) {
+      try {
+        setMembers(readPreviewRows<Member>('members').sort((a, b) => a.last_name.localeCompare(b.last_name)));
+        setBranches(readPreviewRows<Branch>('branches').filter((branch) => branch.status === 'active'));
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load preview people.');
+      }
       setLoading(false);
       return;
     }
@@ -195,10 +202,6 @@ export function PeoplePage({ onAction }: { onAction: (message: string) => void }
 
   const submitMember = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase) {
-      setSaveError('Connect Supabase to save member records.');
-      return;
-    }
     setSaving(true);
     setSaveError('');
     const payload = {
@@ -214,13 +217,27 @@ export function PeoplePage({ onAction }: { onAction: (message: string) => void }
       city: form.city.trim() || null,
       notes: form.notes.trim() || null,
     };
-    const result = editing
-      ? await supabase.from('members').update(payload).eq('id', editing.id).select(memberColumns).single()
-      : await supabase.from('members').insert(payload).select(memberColumns).single();
-    if (result.error) {
-      setSaveError(`Could not ${editing ? 'update' : 'add'} member: ${result.error.message}`);
-      setSaving(false);
-      return;
+    if (supabase) {
+      const result = editing
+        ? await supabase.from('members').update(payload).eq('id', editing.id).select(memberColumns).single()
+        : await supabase.from('members').insert(payload).select(memberColumns).single();
+      if (result.error) {
+        setSaveError(`Could not ${editing ? 'update' : 'add'} member: ${result.error.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      try {
+        const rows = readPreviewRows<Member>('members');
+        const next: Member = { ...payload, id: editing?.id ?? createPreviewId() };
+        writePreviewRows('members', editing
+          ? rows.map((member) => member.id === editing.id ? next : member)
+          : [...rows, next]);
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : 'Could not save preview person.');
+        setSaving(false);
+        return;
+      }
     }
     setDialogOpen(false);
     setSaving(false);
@@ -229,7 +246,12 @@ export function PeoplePage({ onAction }: { onAction: (message: string) => void }
   };
 
   const archiveMember = async (member: Member) => {
-    if (!supabase) return;
+    if (!supabase) {
+      writePreviewRows('members', readPreviewRows<Member>('members').map((row) => row.id === member.id ? { ...row, membership_status: 'inactive' } : row));
+      onAction(`${member.first_name} ${member.last_name} archived.`);
+      await loadMembers();
+      return;
+    }
     const { error } = await supabase.from('members')
       .update({ membership_status: 'inactive' })
       .eq('id', member.id);
@@ -263,9 +285,9 @@ export function PeoplePage({ onAction }: { onAction: (message: string) => void }
           <div><span className="eyebrow">People & membership</span><h2 id="directory-title">Member directory</h2>
             <p>Keep each person's contact details and membership journey together.</p></div>
           <div className="people-actions">
-            <button className="button button-ghost" type="button" disabled={!supabase || !visibleMembers.length}
+            <button className="button button-ghost" type="button" disabled={!visibleMembers.length}
               onClick={() => downloadMembers(visibleMembers)}><Icon name="download" size={15} /> Export CSV</button>
-            <button className="button button-primary" type="button" disabled={!supabase} onClick={openCreate}>
+            <button className="button button-primary" type="button" onClick={openCreate}>
               <Icon name="plus" size={15} /> Add person</button>
           </div>
         </div>

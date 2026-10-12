@@ -1,7 +1,5 @@
-import { ModulePage } from './ModulePage';
-import { moduleDefinitions } from '../data/modules';
+import { ReportsPageImpl } from './ReportsPageImpl';
 
 export function ReportsPage({ onAction }: { onAction: (message: string) => void }) {
-  const definition = moduleDefinitions.reports;
-  return definition ? <ModulePage page="reports" definition={definition} onAction={onAction} /> : null;
+  return <ReportsPageImpl onAction={onAction} />;
 }

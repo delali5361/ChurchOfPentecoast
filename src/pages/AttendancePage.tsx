@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { Icon } from '../components/Icon';
 import { PageHeading } from '../components/PageHeading';
 import { getCurrentOrganization, type WorkspaceOrganization } from '../data/workspace';
+import { createPreviewId, getPreviewOrganization, readPreviewRows, writePreviewRows } from '../data/previewStore';
 import { supabase } from '../supabase';
 
 type AttendanceSession = {
@@ -23,7 +24,7 @@ type AttendanceRecord = {
   checked_in_at: string;
 };
 type Person = { id: string; first_name: string; last_name: string; membership_status: string; branch_id: string | null };
-type ChurchEvent = { id: string; title: string; branch_id: string | null; starts_at: string };
+type ChurchEvent = { id: string; title: string; branch_id: string | null; starts_at: string; status?: string };
 type SessionForm = { title: string; session_type: string; session_date: string; branch_id: string; event_id: string };
 type CheckInForm = { member_id: string; guest_name: string; category: string };
 
@@ -53,7 +54,21 @@ export function AttendancePage({ onAction }: { onAction: (message: string) => vo
   const [checkInForm, setCheckInForm] = useState<CheckInForm>(emptyCheckIn);
 
   const load = useCallback(async () => {
-    if (!supabase) { setLoading(false); return; }
+    if (!supabase) {
+      try {
+        const nextSessions = readPreviewRows<AttendanceSession>('attendance_sessions');
+        setOrganization(getPreviewOrganization(readPreviewRows<{ id: string; name: string }>('branches')));
+        setSessions(nextSessions);
+        setRecords(readPreviewRows<AttendanceRecord>('attendance_records'));
+        setPeople(readPreviewRows<Person>('members').filter((person) => person.membership_status !== 'inactive'));
+        setEvents(readPreviewRows<ChurchEvent>('events').filter((event) => event.status === 'scheduled'));
+        setSelectedSessionId((currentSession) => nextSessions.some((session) => session.id === currentSession) ? currentSession : nextSessions[0]?.id ?? '');
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load preview attendance data.');
+      }
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError('');
     try {
@@ -127,10 +142,10 @@ export function AttendancePage({ onAction }: { onAction: (message: string) => vo
 
   const submitSession = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization) return;
+    if (!organization) { setFormError('The church workspace is not available yet.'); return; }
     setSaving(true);
     setFormError('');
-    const { data, error } = await supabase.from('attendance_sessions').insert({
+    const payload = {
       organization_id: organization.id,
       branch_id: sessionForm.branch_id || null,
       event_id: sessionForm.event_id || null,
@@ -139,22 +154,30 @@ export function AttendancePage({ onAction }: { onAction: (message: string) => vo
       session_date: sessionForm.session_date,
       expected_count: 0,
       status: 'open',
-    }).select('id').single();
-    if (error || !data) {
-      setFormError(`Could not create attendance session: ${error?.message ?? 'No session returned.'}`);
-      setSaving(false);
-      return;
+    };
+    let sessionId = '';
+    if (supabase) {
+      const { data, error } = await supabase.from('attendance_sessions').insert(payload).select('id').single();
+      if (error || !data) {
+        setFormError(`Could not create attendance session: ${error?.message ?? 'No session returned.'}`);
+        setSaving(false);
+        return;
+      }
+      sessionId = data.id;
+    } else {
+      sessionId = createPreviewId();
+      writePreviewRows('attendance_sessions', [...readPreviewRows<AttendanceSession>('attendance_sessions'), { ...payload, id: sessionId }]);
     }
     setDialog(null);
     setSaving(false);
-    setSelectedSessionId(data.id);
+    setSelectedSessionId(sessionId);
     onAction(`${sessionForm.title.trim()} attendance is open.`);
     await load();
   };
 
   const submitCheckIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !selectedSession) return;
+    if (!selectedSession) return;
     setSaving(true);
     setFormError('');
     const person = people.find((item) => item.id === checkInForm.member_id);
@@ -169,18 +192,29 @@ export function AttendancePage({ onAction }: { onAction: (message: string) => vo
       return;
     }
     const attendeeName = person ? `${person.first_name} ${person.last_name}` : checkInForm.guest_name.trim();
-    const { error } = await supabase.from('attendance_records').insert({
+    const payload = {
       session_id: selectedSession.id,
       organization_id: organization?.id,
       branch_id: selectedSession.branch_id,
       member_id: person?.id ?? null,
       person_name: attendeeName,
       category: person?.membership_status ?? checkInForm.category,
-    });
-    if (error) {
-      setFormError(error.code === '23505' ? `${attendeeName} is already checked in.` : `Could not check in attendee: ${error.message}`);
-      setSaving(false);
-      return;
+    };
+    if (supabase) {
+      const { error } = await supabase.from('attendance_records').insert(payload);
+      if (error) {
+        setFormError(error.code === '23505' ? `${attendeeName} is already checked in.` : `Could not check in attendee: ${error.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      const records = readPreviewRows<AttendanceRecord>('attendance_records');
+      if (records.some((record) => record.session_id === selectedSession.id && ((person && record.member_id === person.id) || (!person && record.person_name.toLowerCase() === attendeeName.toLowerCase())))) {
+        setFormError(`${attendeeName} is already checked in.`);
+        setSaving(false);
+        return;
+      }
+      writePreviewRows('attendance_records', [...records, { ...payload, id: createPreviewId(), checked_in_at: new Date().toISOString() }]);
     }
     setDialog(null);
     setSaving(false);
@@ -189,23 +223,30 @@ export function AttendancePage({ onAction }: { onAction: (message: string) => vo
   };
 
   const closeSession = async (session: AttendanceSession) => {
-    if (!supabase) return;
     const status = session.status === 'open' ? 'closed' : 'open';
-    const { error } = await supabase.from('attendance_sessions').update({ status }).eq('id', session.id);
-    if (error) {
-      onAction(`Could not update attendance session: ${error.message}`);
-      return;
+    if (supabase) {
+      const { error } = await supabase.from('attendance_sessions').update({ status }).eq('id', session.id);
+      if (error) {
+        onAction(`Could not update attendance session: ${error.message}`);
+        return;
+      }
+    } else {
+      writePreviewRows('attendance_sessions', readPreviewRows<AttendanceSession>('attendance_sessions').map((row) => row.id === session.id ? { ...row, status } : row));
     }
     onAction(`${session.title} attendance ${status === 'closed' ? 'closed' : 'reopened'}.`);
     await load();
   };
 
   const removeCheckIn = async (record: AttendanceRecord) => {
-    if (!supabase || !selectedSession) return;
-    const { error } = await supabase.from('attendance_records').delete().eq('id', record.id);
-    if (error) {
-      onAction(`Could not remove check-in: ${error.message}`);
-      return;
+    if (!selectedSession) return;
+    if (supabase) {
+      const { error } = await supabase.from('attendance_records').delete().eq('id', record.id);
+      if (error) {
+        onAction(`Could not remove check-in: ${error.message}`);
+        return;
+      }
+    } else {
+      writePreviewRows('attendance_records', readPreviewRows<AttendanceRecord>('attendance_records').filter((row) => row.id !== record.id));
     }
     onAction(`${record.person_name} removed from attendance.`);
     await load();
@@ -225,7 +266,7 @@ export function AttendancePage({ onAction }: { onAction: (message: string) => vo
       <div className="attendance-layout">
         <section className="attendance-sessions glass-card" aria-label="Attendance sessions">
           <div className="attendance-panel-heading"><div><span className="eyebrow">Worship & gatherings</span><h2>Sessions</h2></div>
-            <button className="icon-button" type="button" disabled={!supabase} aria-label="Create session" onClick={openCreateSession}><Icon name="plus" size={18} /></button></div>
+            <button className="icon-button" type="button" aria-label="Create session" onClick={openCreateSession}><Icon name="plus" size={18} /></button></div>
           {loading && <div className="household-empty"><span className="loading-spinner" /> Loading sessions…</div>}
           {!loading && sessions.map((session) => <button className={`attendance-session-item ${selectedSessionId === session.id ? 'selected' : ''}`} type="button" key={session.id} onClick={() => { setSelectedSessionId(session.id); setQuery(''); }}>
             <span className="attendance-session-icon"><Icon name={session.event_id ? 'calendar' : 'clipboard'} size={16} /></span>
@@ -240,8 +281,8 @@ export function AttendancePage({ onAction }: { onAction: (message: string) => vo
             <div className="attendance-detail-heading"><div><span className="eyebrow">{selectedSession.session_type} · {branchName(selectedSession.branch_id)}</span>
               <h2>{selectedSession.title}</h2><p>{shortDate(selectedSession.session_date)}{eventName(selectedSession.event_id) ? ` · Event: ${eventName(selectedSession.event_id)}` : ''}</p></div>
               <div className="people-actions"><span className="attendance-count"><strong>{sessionRecords.length}</strong> checked in</span>
-                {selectedSession.status === 'open' && <button className="button button-primary" type="button" disabled={!supabase} onClick={openCheckIn}><Icon name="user-plus" size={15} /> Check in</button>}
-                <button className="button button-ghost" type="button" disabled={!supabase} onClick={() => void closeSession(selectedSession)}>{selectedSession.status === 'open' ? 'Close session' : 'Reopen'}</button></div></div>
+                {selectedSession.status === 'open' && <button className="button button-primary" type="button" onClick={openCheckIn}><Icon name="user-plus" size={15} /> Check in</button>}
+                <button className="button button-ghost" type="button" onClick={() => void closeSession(selectedSession)}>{selectedSession.status === 'open' ? 'Close session' : 'Reopen'}</button></div></div>
             <label className="people-search attendance-search"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find an attendee" aria-label="Search check-ins" /></label>
             <div className="attendance-record-list">
               {filteredRecords.map((record) => <article className="attendance-record" key={record.id}><span className="household-person-avatar">{record.person_name.split(/\s+/).slice(0, 2).map((part) => part.slice(0, 1)).join('').toUpperCase()}</span>
@@ -251,7 +292,7 @@ export function AttendancePage({ onAction }: { onAction: (message: string) => vo
             </div>
           </> : <div className="household-no-selection"><span className="household-icon"><Icon name="clipboard" size={22} /></span>
             <h2>Attendance workspace</h2><p>Create a session for a church service or gathering, then check people in as they arrive.</p>
-            <button className="button button-primary" type="button" disabled={!supabase} onClick={openCreateSession}><Icon name="plus" size={15} /> Create session</button></div>}
+            <button className="button button-primary" type="button" onClick={openCreateSession}><Icon name="plus" size={15} /> Create session</button></div>}
         </section>
       </div>
     </section>

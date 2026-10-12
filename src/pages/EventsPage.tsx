@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Icon } from '../components/Icon';
 import { PageHeading } from '../components/PageHeading';
+import { createPreviewId, getPreviewOrganization, readPreviewRows, writePreviewRows } from '../data/previewStore';
 import { getCurrentOrganization, type WorkspaceOrganization } from '../data/workspace';
 import { supabase } from '../supabase';
 
@@ -72,7 +73,24 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
   const [registrationForm, setRegistrationForm] = useState<RegistrationForm>(emptyRegistration);
 
   const load = useCallback(async () => {
-    if (!supabase) { setLoading(false); return; }
+    if (!supabase) {
+      setLoadError('');
+      try {
+        const nextEvents = readPreviewRows<ChurchEvent>('events').sort((left, right) => left.starts_at.localeCompare(right.starts_at));
+        const nextRegistrations = readPreviewRows<Registration>('event_registrations');
+        const nextPeople = readPreviewRows<Person>('members').filter((person) => person.membership_status !== 'inactive');
+        const branches = readPreviewRows<WorkspaceOrganization['branches'][number]>('branches');
+        setOrganization(getPreviewOrganization(branches));
+        setEvents(nextEvents);
+        setRegistrations(nextRegistrations);
+        setPeople(nextPeople);
+        setSelectedEventId((currentId) => nextEvents.some((event) => event.id === currentId) ? currentId : nextEvents[0]?.id ?? '');
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load preview events.');
+      }
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError('');
     try {
@@ -151,7 +169,10 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
 
   const submitEvent = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization) return;
+    if (!organization) {
+      setFormError('The church workspace is not available yet.');
+      return;
+    }
     setSaving(true);
     setFormError('');
     const startsAt = new Date(eventForm.starts_at);
@@ -178,24 +199,45 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
       capacity,
       registration_required: eventForm.registration_required,
     };
-    const result = editingEvent
-      ? await supabase.from('events').update(payload).eq('id', editingEvent.id).select('id').single()
-      : await supabase.from('events').insert({ organization_id: organization.id, ...payload, status: 'scheduled', attendee_count: 0 }).select('id').single();
-    if (result.error || !result.data) {
-      setFormError(`Could not ${editingEvent ? 'update' : 'create'} event: ${result.error?.message ?? 'No event returned.'}`);
+    let eventId = editingEvent?.id ?? createPreviewId();
+    try {
+      if (supabase) {
+        const result = editingEvent
+          ? await supabase.from('events').update(payload).eq('id', editingEvent.id).select('id').single()
+          : await supabase.from('events').insert({ organization_id: organization.id, ...payload, status: 'scheduled', attendee_count: 0 }).select('id').single();
+        if (result.error || !result.data) {
+          setFormError(`Could not ${editingEvent ? 'update' : 'create'} event: ${result.error?.message ?? 'No event returned.'}`);
+          setSaving(false);
+          return;
+        }
+        eventId = result.data.id;
+      } else {
+        const rows = readPreviewRows<ChurchEvent>('events');
+        const nextEvent: ChurchEvent = {
+          ...payload,
+          id: eventId,
+          attendee_count: editingEvent?.attendee_count ?? 0,
+          status: editingEvent?.status ?? 'scheduled',
+        };
+        writePreviewRows('events', editingEvent
+          ? rows.map((row) => row.id === eventId ? nextEvent : row)
+          : [...rows, nextEvent]);
+      }
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Could not save event.');
       setSaving(false);
       return;
     }
     setDialog(null);
     setSaving(false);
-    setSelectedEventId(result.data.id);
+    setSelectedEventId(eventId);
     onAction(`${payload.title} ${editingEvent ? 'updated' : 'created'}.`);
     await load();
   };
 
   const submitRegistration = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization || !selectedEvent) return;
+    if (!organization || !selectedEvent) return;
     setSaving(true);
     setFormError('');
     const person = people.find((item) => item.id === registrationForm.member_id);
@@ -215,17 +257,41 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
       return;
     }
     const name = person ? `${person.first_name} ${person.last_name}` : registrationForm.attendee_name.trim();
-    const { error } = await supabase.from('event_registrations').insert({
-      organization_id: organization.id,
-      branch_id: selectedEvent.branch_id,
+    const payload = {
       event_id: selectedEvent.id,
       member_id: person?.id ?? null,
       attendee_name: name,
       email: person?.email ?? (registrationForm.email.trim() || null),
       phone: person?.phone ?? (registrationForm.phone.trim() || null),
-    });
-    if (error) {
-      setFormError(error.code === '23505' ? `${name} is already registered.` : `Could not register attendee: ${error.message}`);
+    };
+    try {
+      if (supabase) {
+        const { error } = await supabase.from('event_registrations').insert({
+          organization_id: organization.id,
+          branch_id: selectedEvent.branch_id,
+          ...payload,
+        });
+        if (error) {
+          setFormError(error.code === '23505' ? `${name} is already registered.` : `Could not register attendee: ${error.message}`);
+          setSaving(false);
+          return;
+        }
+      } else {
+        const rows = readPreviewRows<Registration>('event_registrations');
+        if (person && rows.some((row) => row.event_id === selectedEvent.id && row.member_id === person.id && row.status !== 'cancelled')) {
+          setFormError(`${name} is already registered.`);
+          setSaving(false);
+          return;
+        }
+        writePreviewRows('event_registrations', [...rows, {
+          ...payload,
+          id: createPreviewId(),
+          status: 'registered',
+          registered_at: new Date().toISOString(),
+        }]);
+      }
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Could not register attendee.');
       setSaving(false);
       return;
     }
@@ -236,22 +302,40 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
   };
 
   const updateRegistration = async (registration: Registration, status: Registration['status']) => {
-    if (!supabase) return;
-    const { error } = await supabase.from('event_registrations').update({ status }).eq('id', registration.id);
-    if (error) {
-      onAction(`Could not update registration: ${error.message}`);
-      return;
+    if (supabase) {
+      const { error } = await supabase.from('event_registrations').update({ status }).eq('id', registration.id);
+      if (error) {
+        onAction(`Could not update registration: ${error.message}`);
+        return;
+      }
+    } else {
+      try {
+        writePreviewRows('event_registrations', readPreviewRows<Registration>('event_registrations')
+          .map((row) => row.id === registration.id ? { ...row, status } : row));
+      } catch (error) {
+        onAction(`Could not update registration: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        return;
+      }
     }
     onAction(`${registration.attendee_name} marked ${status}.`);
     await load();
   };
 
   const updateEventStatus = async (event: ChurchEvent, status: EventStatus) => {
-    if (!supabase) return;
-    const { error } = await supabase.from('events').update({ status }).eq('id', event.id);
-    if (error) {
-      onAction(`Could not update event status: ${error.message}`);
-      return;
+    if (supabase) {
+      const { error } = await supabase.from('events').update({ status }).eq('id', event.id);
+      if (error) {
+        onAction(`Could not update event status: ${error.message}`);
+        return;
+      }
+    } else {
+      try {
+        writePreviewRows('events', readPreviewRows<ChurchEvent>('events')
+          .map((row) => row.id === event.id ? { ...row, status } : row));
+      } catch (error) {
+        onAction(`Could not update event status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        return;
+      }
     }
     onAction(`${event.title} marked ${status}.`);
     await load();
@@ -266,11 +350,11 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
         <article><span>People registered</span><strong>{totalRegistered}</strong></article>
         <article><span>Completed events</span><strong>{events.filter((event) => event.status === 'completed').length}</strong></article>
       </div>
-      {!supabase && <div className="people-notice" role="status"><Icon name="database" size={17} /><span>Preview only. Connect Supabase to manage church events and registrations.</span></div>}
+      {!supabase && <div className="people-notice" role="status"><Icon name="database" size={17} /><span>Preview only. Events and registrations are saved in this browser and are not shared or synced.</span></div>}
       {loadError && <div className="people-error" role="alert">{loadError}<button className="text-button" onClick={() => void load()}>Retry</button></div>}
       <section className="events-panel glass-card">
         <div className="events-heading"><div><span className="eyebrow">Services & gatherings</span><h2>Church events</h2><p>Coordinate church-wide gatherings and keep registrations connected to attendance.</p></div>
-          <button className="button button-primary" type="button" disabled={!supabase} onClick={openCreate}><Icon name="plus" size={15} /> Create event</button></div>
+          <button className="button button-primary" type="button" onClick={openCreate}><Icon name="plus" size={15} /> Create event</button></div>
         <div className="people-toolbar">
           <label className="people-search"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search events" aria-label="Search events" /></label>
           <label className="people-filter"><span>Status</span><select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} aria-label="Filter events">
@@ -294,11 +378,11 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
                 <h3>{selectedEvent.title}</h3><p>{formatDateTime(selectedEvent.starts_at)}{selectedEvent.ends_at ? ` – ${new Date(selectedEvent.ends_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</p>
                 {selectedEvent.location && <p><Icon name="church" size={13} /> {selectedEvent.location}</p>}
                 {selectedEvent.description && <p className="event-description">{selectedEvent.description}</p>}</div>
-                <button className="icon-button" type="button" disabled={!supabase} aria-label="Edit event" onClick={() => openEdit(selectedEvent)}><Icon name="settings" size={16} /></button></div>
+                <button className="icon-button" type="button" aria-label="Edit event" onClick={() => openEdit(selectedEvent)}><Icon name="settings" size={16} /></button></div>
               <div className="event-capacity-row"><span><strong>{registered.length}</strong> registered{selectedEvent.capacity !== null ? ` of ${selectedEvent.capacity}` : ''}</span>
                 <span>{selectedEvent.registration_required ? 'Registration required' : 'Walk-ins welcome'}</span></div>
               <div className="event-detail-actions">
-                {selectedEvent.status === 'scheduled' && <><button className="button button-primary" type="button" disabled={!supabase || (selectedEvent.capacity !== null && registered.length >= selectedEvent.capacity)} onClick={openRegistration}><Icon name="user-plus" size={14} /> Register attendee</button>
+                {selectedEvent.status === 'scheduled' && <><button className="button button-primary" type="button" disabled={selectedEvent.capacity !== null && registered.length >= selectedEvent.capacity} onClick={openRegistration}><Icon name="user-plus" size={14} /> Register attendee</button>
                   <button className="button button-ghost" type="button" onClick={() => void updateEventStatus(selectedEvent, 'completed')}>Mark completed</button>
                   <button className="text-button cancel-event-button" type="button" onClick={() => void updateEventStatus(selectedEvent, 'cancelled')}>Cancel event</button></>}
                 {selectedEvent.status === 'cancelled' && <button className="button button-ghost" type="button" onClick={() => void updateEventStatus(selectedEvent, 'scheduled')}>Restore event</button>}
@@ -315,7 +399,7 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
                 {!eventRegistrations.length && <div className="household-empty">No registrations yet.</div>}
               </div>
             </> : <div className="household-no-selection"><span className="household-icon"><Icon name="calendar" size={22} /></span><h2>Events calendar</h2>
-              <p>Create an event, manage registrations, and connect its attendance session.</p><button className="button button-primary" type="button" disabled={!supabase} onClick={openCreate}><Icon name="plus" size={15} /> Create event</button></div>}
+              <p>Create an event, manage registrations, and connect its attendance session.</p><button className="button button-primary" type="button" onClick={openCreate}><Icon name="plus" size={15} /> Create event</button></div>}
           </section>
         </div>
       </section>

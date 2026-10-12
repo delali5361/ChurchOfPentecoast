@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { Icon } from '../components/Icon';
 import { PageHeading } from '../components/PageHeading';
 import { getCurrentOrganization, type WorkspaceOrganization } from '../data/workspace';
+import { createPreviewId, getPreviewOrganization, readPreviewRows, writePreviewRows } from '../data/previewStore';
 import { supabase } from '../supabase';
 
 type Branch = {
@@ -61,7 +62,20 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
   const [assignmentForm, setAssignmentForm] = useState({ member_id: '', unit_id: '', role_title: '' });
 
   const load = useCallback(async () => {
-    if (!supabase) { setLoading(false); return; }
+    if (!supabase) {
+      try {
+        const localBranches = readPreviewRows<Branch>('branches');
+        setOrganization(getPreviewOrganization(localBranches));
+        setBranches(localBranches);
+        setUnits(readPreviewRows<Unit>('organization_units'));
+        setPeople(readPreviewRows<Person>('members').filter((person) => person.membership_status === 'member'));
+        setAssignments(readPreviewRows<Assignment>('worker_assignments'));
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load preview church structure.');
+      }
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError('');
     try {
@@ -160,7 +174,7 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
 
   const submitBranch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization) return;
+    if (!organization) { setFormError('The church workspace is not available yet.'); return; }
     setSaving(true);
     setFormError('');
     const branchPayload = {
@@ -172,13 +186,19 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
       contact_phone: branchForm.contact_phone.trim() || null,
       is_headquarters: branchForm.is_headquarters,
     };
-    const { error } = editingBranch
-      ? await supabase.from('branches').update(branchPayload).eq('id', editingBranch.id)
-      : await supabase.from('branches').insert({ organization_id: organization.id, ...branchPayload, status: 'active' });
-    if (error) {
-      setFormError(`Could not create branch: ${error.message}`);
-      setSaving(false);
-      return;
+    if (supabase) {
+      const { error } = editingBranch
+        ? await supabase.from('branches').update(branchPayload).eq('id', editingBranch.id)
+        : await supabase.from('branches').insert({ organization_id: organization.id, ...branchPayload, status: 'active' });
+      if (error) {
+        setFormError(`Could not create branch: ${error.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      const rows = readPreviewRows<Branch>('branches');
+      const branch: Branch = { ...branchPayload, id: editingBranch?.id ?? createPreviewId(), status: editingBranch?.status ?? 'active' };
+      writePreviewRows('branches', editingBranch ? rows.map((item) => item.id === branch.id ? branch : item) : [...rows, branch]);
     }
     setDialog(null);
     setSaving(false);
@@ -187,12 +207,15 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
   };
 
   const updateBranchStatus = async (branch: Branch) => {
-    if (!supabase) return;
     const nextStatus = branch.status === 'active' ? 'inactive' : 'active';
-    const { error } = await supabase.from('branches').update({ status: nextStatus }).eq('id', branch.id);
-    if (error) {
-      onAction(`Could not update ${branch.name}: ${error.message}`);
-      return;
+    if (supabase) {
+      const { error } = await supabase.from('branches').update({ status: nextStatus }).eq('id', branch.id);
+      if (error) {
+        onAction(`Could not update ${branch.name}: ${error.message}`);
+        return;
+      }
+    } else {
+      writePreviewRows('branches', readPreviewRows<Branch>('branches').map((item) => item.id === branch.id ? { ...item, status: nextStatus } : item));
     }
     onAction(`${branch.name} branch marked ${nextStatus}.`);
     await load();
@@ -200,7 +223,7 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
 
   const submitUnit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization) return;
+    if (!organization) { setFormError('The church workspace is not available yet.'); return; }
     setSaving(true);
     setFormError('');
     const unitPayload = {
@@ -210,13 +233,19 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
       unit_type: unitForm.unit_type,
       description: unitForm.description.trim() || null,
     };
-    const { error } = editingUnit
-      ? await supabase.from('organization_units').update(unitPayload).eq('id', editingUnit.id)
-      : await supabase.from('organization_units').insert({ organization_id: organization.id, ...unitPayload });
-    if (error) {
-      setFormError(`Could not create ${unitLabels[unitForm.unit_type].toLowerCase()}: ${error.message}`);
-      setSaving(false);
-      return;
+    if (supabase) {
+      const { error } = editingUnit
+        ? await supabase.from('organization_units').update(unitPayload).eq('id', editingUnit.id)
+        : await supabase.from('organization_units').insert({ organization_id: organization.id, ...unitPayload });
+      if (error) {
+        setFormError(`Could not create ${unitLabels[unitForm.unit_type].toLowerCase()}: ${error.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      const rows = readPreviewRows<Unit>('organization_units');
+      const unit: Unit = { ...unitPayload, id: editingUnit?.id ?? createPreviewId(), status: editingUnit?.status ?? 'active' };
+      writePreviewRows('organization_units', editingUnit ? rows.map((item) => item.id === unit.id ? unit : item) : [...rows, unit]);
     }
     setDialog(null);
     setSaving(false);
@@ -225,12 +254,15 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
   };
 
   const updateUnitStatus = async (unit: Unit) => {
-    if (!supabase) return;
     const status = unit.status === 'active' ? 'inactive' : 'active';
-    const { error } = await supabase.from('organization_units').update({ status }).eq('id', unit.id);
-    if (error) {
-      onAction(`Could not update ${unit.name}: ${error.message}`);
-      return;
+    if (supabase) {
+      const { error } = await supabase.from('organization_units').update({ status }).eq('id', unit.id);
+      if (error) {
+        onAction(`Could not update ${unit.name}: ${error.message}`);
+        return;
+      }
+    } else {
+      writePreviewRows('organization_units', readPreviewRows<Unit>('organization_units').map((item) => item.id === unit.id ? { ...item, status } : item));
     }
     onAction(`${unit.name} marked ${status}.`);
     await load();
@@ -238,7 +270,7 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
 
   const submitAssignment = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!supabase || !organization) return;
+    if (!organization) { setFormError('The church workspace is not available yet.'); return; }
     setSaving(true);
     setFormError('');
     const unit = unitsById.get(assignmentForm.unit_id);
@@ -253,17 +285,24 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
       setSaving(false);
       return;
     }
-    const { error } = await supabase.from('worker_assignments').insert({
+    const payload = {
       organization_id: organization.id,
       branch_id: unit.branch_id ?? person.branch_id,
       unit_id: assignmentForm.unit_id,
       member_id: assignmentForm.member_id,
       role_title: assignmentForm.role_title.trim() || 'Volunteer',
-    });
-    if (error) {
-      setFormError(`Could not assign this worker: ${error.message}`);
-      setSaving(false);
-      return;
+    };
+    if (supabase) {
+      const { error } = await supabase.from('worker_assignments').insert(payload);
+      if (error) {
+        setFormError(`Could not assign this worker: ${error.message}`);
+        setSaving(false);
+        return;
+      }
+    } else {
+      writePreviewRows('worker_assignments', [...readPreviewRows<Assignment>('worker_assignments'), {
+        ...payload, id: createPreviewId(), status: 'active',
+      }]);
     }
     setDialog(null);
     setSaving(false);
@@ -272,11 +311,14 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
   };
 
   const endAssignment = async (assignment: Assignment) => {
-    if (!supabase) return;
-    const { error } = await supabase.from('worker_assignments').update({ status: 'inactive' }).eq('id', assignment.id);
-    if (error) {
-      onAction(`Could not end worker assignment: ${error.message}`);
-      return;
+    if (supabase) {
+      const { error } = await supabase.from('worker_assignments').update({ status: 'inactive' }).eq('id', assignment.id);
+      if (error) {
+        onAction(`Could not end worker assignment: ${error.message}`);
+        return;
+      }
+    } else {
+      writePreviewRows('worker_assignments', readPreviewRows<Assignment>('worker_assignments').map((item) => item.id === assignment.id ? { ...item, status: 'inactive' } : item));
     }
     onAction('Worker assignment ended.');
     await load();
@@ -296,8 +338,8 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
       <section className="structure-panel glass-card">
         <div className="structure-heading"><div><span className="eyebrow">Branches & ministry teams</span><h2>{organization?.name ?? 'Church structure'}</h2>
           <p>Connect campuses, ministry teams, and the people who serve in them.</p></div>
-          <div className="people-actions"><button className="button button-ghost" type="button" disabled={!supabase} onClick={() => openAssignment()}><Icon name="user-plus" size={15} /> Assign worker</button>
-            <button className="button button-primary" type="button" disabled={!supabase} onClick={openBranch}><Icon name="plus" size={15} /> Add branch</button></div></div>
+          <div className="people-actions"><button className="button button-ghost" type="button" onClick={() => openAssignment()}><Icon name="user-plus" size={15} /> Assign worker</button>
+            <button className="button button-primary" type="button" onClick={openBranch}><Icon name="plus" size={15} /> Add branch</button></div></div>
         {!supabase && <div className="people-notice" role="status"><Icon name="database" size={17} /><span>Preview only. Connect Supabase to manage branches, ministry teams, and workers.</span></div>}
         {loadError && <div className="people-error" role="alert">{loadError}<button className="text-button" onClick={() => void load()}>Retry</button></div>}
         <div className="structure-tabs" role="tablist" aria-label="Church structure sections">
@@ -309,7 +351,7 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
           <label className="people-search"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search church structure" aria-label="Search church structure" /></label>
           <label className="people-filter"><span>Branch</span><select value={selectedBranch} onChange={(event) => setSelectedBranch(event.target.value)} aria-label="Filter by branch">
             <option value="all">All branches</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
-          {activeTab !== 'branches' && <button className="button button-primary structure-add-button" type="button" disabled={!supabase} onClick={openUnit}><Icon name="plus" size={15} /> Add team</button>}
+          {activeTab !== 'branches' && <button className="button button-primary structure-add-button" type="button" onClick={openUnit}><Icon name="plus" size={15} /> Add team</button>}
         </div>
 
         {activeTab === 'branches' && <div className="branch-grid">
@@ -337,7 +379,7 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
                 <small>{parent ? `${parent.name} · ` : ''}{branch?.name ?? 'Organization-wide'} · {matchingAssignments(unit.id).length} workers</small>
                 {unit.description && <p>{unit.description}</p>}</div>
               <span className={`member-status ${unit.status === 'active' ? 'status-member' : 'status-inactive'}`}>{unit.status}</span>
-              <button className="button button-ghost" type="button" disabled={!supabase || unit.status !== 'active'} onClick={() => openAssignment(unit.id)}>Add worker</button>
+              <button className="button button-ghost" type="button" disabled={unit.status !== 'active'} onClick={() => openAssignment(unit.id)}>Add worker</button>
               <button className="text-button" type="button" onClick={() => editUnit(unit)}>Edit</button>
               <button className="text-button" type="button" onClick={() => void updateUnitStatus(unit)}>{unit.status === 'active' ? 'Deactivate' : 'Reactivate'}</button>
             </article>;
@@ -401,6 +443,9 @@ export function StructurePage({ onAction }: { onAction: (message: string) => voi
           <div className="member-form-actions"><button type="button" className="button button-ghost" disabled={saving} onClick={() => setDialog(null)}>Cancel</button><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : editingUnit ? 'Save team' : 'Create team'}</button></div>
         </form>}
         {dialog === 'assignment' && <form className="member-form" onSubmit={(event) => void submitAssignment(event)}>
+          {(!people.length || !units.some((unit) => unit.status === 'active')) && <div className="workspace-alert">
+            Add at least one active person and one active team before assigning a worker.
+          </div>}
           <div className="member-form-grid">
             <label>Person<select required autoFocus value={assignmentForm.member_id} onChange={(event) => setAssignmentForm((current) => ({ ...current, member_id: event.target.value }))}><option value="">Select a person</option>
               {people.map((person) => <option key={person.id} value={person.id}>{person.first_name} {person.last_name}</option>)}</select></label>
