@@ -2,7 +2,6 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { Icon } from '../components/Icon';
 import { supabase } from '../supabase';
-import { useNavigate } from 'react-router-dom';
 
 interface FormState {
   orgName: string;
@@ -20,8 +19,7 @@ interface FormState {
   success: string;
 }
 
-export function OnboardingPage() {
-  const navigate = useNavigate();
+export function OnboardingPage({ onComplete }: { onComplete: () => void }) {
   const [stage, setStage] = useState<'org' | 'branch' | 'user'>('org');
   const [form, setForm] = useState<FormState>({
     orgName: '',
@@ -163,7 +161,7 @@ export function OnboardingPage() {
       if (assignError) throw assignError;
 
       setForm(prev => ({ ...prev, success: 'Account created! Redirecting...' }));
-      setTimeout(() => navigate('/overview'), 2000);
+      setTimeout(onComplete, 2000);
     } catch (err) {
       setForm(prev => ({
         ...prev,
@@ -179,7 +177,7 @@ export function OnboardingPage() {
       <div className="onboarding-wrapper">
         <div className="onboarding-form">
           <div className="form-header">
-            <Icon name="church" size="lg" />
+            <Icon name="church" size={24} />
             <h1>Church Management System Setup</h1>
             <p>Welcome! Let's set up your church's account.</p>
           </div>

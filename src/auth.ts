@@ -2,7 +2,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export async function getCurrentUserRoles(client: SupabaseClient) {
-  const { data: session } = await client.auth.getSession();
+  const { data: session, error: sessionError } = await client.auth.getSession();
+  if (sessionError) throw new Error(`Could not read the sign-in session: ${sessionError.message}`);
   if (!session?.session) return [];
 
   const { data, error } = await client
@@ -10,7 +11,7 @@ export async function getCurrentUserRoles(client: SupabaseClient) {
     .select('app_roles(code, name)')
     .eq('user_id', session.session.user.id);
 
-  if (error) return [];
+  if (error) throw new Error(`Could not load your workspace roles: ${error.message}`);
   return data?.flatMap((entry) => {
     const role = entry.app_roles as unknown as { code: string; name: string } | null;
     return role?.code ? [role.code] : [];

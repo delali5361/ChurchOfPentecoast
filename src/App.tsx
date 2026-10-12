@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
+import type { Session } from '@supabase/supabase-js';
 import { AppShell } from './components/AppShell';
 import { Icon } from './components/Icon';
 import { pageSections } from './navigation';
@@ -19,10 +19,7 @@ import { StructurePage } from './pages/StructurePage';
 import { VisitorsPage } from './pages/VisitorsPage';
 import type { PageId } from './types';
 import { getCurrentUserRoles } from './auth';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase: SupabaseClient | null = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+import { supabase } from './supabase';
 
 const pageComponents: Partial<Record<PageId, (props: { onAction: (message: string) => void }) => JSX.Element | null>> = {
   people: PeoplePage,
@@ -75,6 +72,26 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!supabase || !session) {
+      setRoles([]);
+      setRoleReady(true);
+      return;
+    }
+    let mounted = true;
+    setRoleReady(false);
+    void getCurrentUserRoles(supabase)
+      .then((nextRoles) => { if (mounted) setRoles(nextRoles); })
+      .catch((error: unknown) => {
+        if (mounted) {
+          setRoles([]);
+          setWorkspaceError(`Could not verify your workspace role: ${error instanceof Error ? error.message : 'Unknown role lookup error.'}`);
+        }
+      })
+      .finally(() => { if (mounted) setRoleReady(true); });
+    return () => { mounted = false; };
+  }, [session]);
+
+  useEffect(() => {
     if (!searchOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setSearchOpen(false);
@@ -116,12 +133,12 @@ function App() {
       notify(`Could not sign out: ${error instanceof Error ? error.message : 'Unknown authentication error.'}`);
     }
   };
-  const canSeePastoral = !supabase || roles.includes('administrator') || roles.includes('pastoral_care');
+  const canSeePastoral = !supabase || roles.includes('administrator') || roles.includes('pastoral_care_officer');
   const administratorName = session?.user.email ?? 'Church administrator';
 
   if (!authReady) return <div className="auth-loading"><span className="loading-spinner" /><span>Preparing your workspace</span></div>;
   if (supabase && !session) return <SignInPage client={supabase} onStartOnboarding={() => setShowOnboarding(true)} />;
-  if (showOnboarding) return <OnboardingPage />;
+  if (showOnboarding) return <OnboardingPage onComplete={() => setShowOnboarding(false)} />;
   if (supabase && !roleReady) return <div className="auth-loading"><span className="loading-spinner" /><span>Checking your workspace access</span></div>;
 
   const PageComponent = pageComponents[activePage];
@@ -130,7 +147,6 @@ function App() {
       onMenuClose={() => setMenuOpen(false)} administratorName={administratorName} canSeePastoral={canSeePastoral}
       onSignOut={() => { void signOut(); }} onSearch={() => { setSearchQuery(''); setSearchOpen(true); }}>
       {workspaceError && <div className="workspace-alert" role="alert"><Icon name="shield" size={17} /><span>{workspaceError}</span><button className="icon-button" onClick={() => setWorkspaceError('')} aria-label="Dismiss message"><Icon name="close" size={16} /></button></div>}
-      {!supabase && <div className="demo-mode-banner"><Icon name="sparkle" size={14} /> Preview mode <span>Connect Supabase to enable authentication and live records.</span></div>}
       {activePage === 'overview'
         ? <OverviewPage onNavigate={setActivePage} />
         : PageComponent
