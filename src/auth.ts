@@ -1,5 +1,31 @@
 // src/auth.ts - Authorization and permission utilities
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { PageId } from './types';
+
+const rolePages: Record<string, PageId[]> = {
+  member: [
+    'overview', 'events', 'member-giving', 'member-updates', 'member-profile',
+    'member-attendance', 'member-ministries', 'member-care', 'member-notifications',
+  ],
+  presiding_elder: ['overview', 'people', 'visitors', 'households', 'structure', 'attendance', 'events', 'reports'],
+  youth_executive: ['overview'],
+  media: ['overview', 'events', 'communications'],
+  pastor: ['overview', 'people', 'visitors', 'households', 'structure', 'attendance', 'events', 'pastoral-care', 'reports'],
+  branch_administrator: ['overview', 'people', 'visitors', 'households', 'structure', 'attendance', 'events', 'communications', 'reports'],
+  department_leader: ['overview', 'structure', 'attendance', 'events'],
+  group_leader: ['overview', 'structure', 'attendance', 'events'],
+  worker: ['overview', 'attendance', 'events'],
+  finance_officer: ['overview', 'finance', 'reports'],
+  communication_officer: ['overview', 'events', 'communications'],
+  pastoral_care_officer: ['overview', 'people', 'pastoral-care'],
+};
+
+export function getRoleAccessiblePages(roles: string[]): PageId[] | null {
+  if (roles.includes('administrator') || roles.includes('super_administrator')) return null;
+  const recognizedRoles = roles.filter((role) => role in rolePages);
+  if (!recognizedRoles.length) return ['overview'];
+  return [...new Set(recognizedRoles.flatMap((role) => rolePages[role]))];
+}
 
 export async function getCurrentUserRoles(client: SupabaseClient) {
   const { data: session, error: sessionError } = await client.auth.getSession();

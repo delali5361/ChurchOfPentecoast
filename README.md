@@ -116,7 +116,36 @@ organization-scoped RLS policies; privileged system roles and permissions are
 reserved for super administrators. `20261010019000_phase10_administration.sql`
 adds these policies and audit triggers.
 
-**Remaining: 1 phase.** Phase 11 — Production hardening (migration
+**Phase 11 — Public portal and role dashboards (in progress):** introduces a
+public Grace Assembly landing page, sign-in, and Member registration. Public
+registration provisions a Member role and a linked member profile server-side;
+role selection is never accepted from the browser. Admin, Presiding Elder,
+Member, and Media workspaces have role-aware dashboards and navigation.
+Members land on a dedicated "My Church" home with service check-in, event,
+announcement, membership, and giving entry points. The QR check-in screen can
+read a service QR in browsers that support camera barcode detection; local
+preview check-ins are browser-only and limited to one per service on that
+device. Secure QR issuance/verification, server-enforced duplicate prevention,
+member communications delivery, and payment processing are not connected yet.
+Do not treat preview attendance as an official record or collect payment data
+until the backend and a payment provider are configured.
+The dedicated Member sidebar also includes giving, targeted updates, profile
+and household, attendance and reminders, ministry discovery and volunteer
+interest/availability, prayer/care requests, and notification/communication
+consent preferences. Reminders, volunteer interest/availability, and
+communication preferences are saved only in the current browser. Giving
+checkout is not processed, care requests are not transmitted or saved, and real
+member profile/household edits require backend authorization before they can be
+committed.
+`20261010020000_phase11_role_portal.sql` adds role records, member-account
+linkage, constrained event registration, and communications permission checks.
+Youth Executive access remains limited to its dashboard until members can be
+linked to the Youth ministry/group and the data scope is enforced in RLS.
+The initial Admin role must be assigned through a trusted setup process; public
+registration never grants administrator access.
+
+**Remaining: 2 phases of work.** Finish Phase 11 by wiring Youth membership
+and its scoped workspace, then Phase 12 — Production hardening (migration
 reconciliation, security review, test coverage, monitoring, backups, and
 deployment readiness).
 

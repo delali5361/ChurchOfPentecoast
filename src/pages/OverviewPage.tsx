@@ -1,21 +1,97 @@
+import { useEffect, useState } from 'react';
 import { PageHeading } from '../components/PageHeading';
 import { BrandMark, Icon } from '../components/Icon';
 import { pageSections } from '../navigation';
 import type { PageId } from '../types';
+import { supabase } from '../supabase';
 
 const monthLabels = ['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
 
-export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => void }) {
+const roleDashboards: Record<string, { label: string; title: string; description: string; pages: PageId[] }> = {
+  member: {
+    label: 'YOUR CHURCH FAMILY',
+    title: 'Welcome to Grace Assembly.',
+    description: 'Keep up with gatherings and find your place in the life of the church.',
+    pages: ['events'],
+  },
+  presiding_elder: {
+    label: 'CHURCH LEADERSHIP',
+    title: 'Lead with care and clarity.',
+    description: 'Keep a view of church life, people, ministry, and shared progress.',
+    pages: ['people', 'visitors', 'attendance', 'events', 'reports'],
+  },
+  youth_executive: {
+    label: 'YOUTH MINISTRY',
+    title: 'Make room for the next generation.',
+    description: 'Your Youth group workspace will be available when an Admin links your account to the Youth ministry.',
+    pages: [],
+  },
+  media: {
+    label: 'MEDIA & COMMUNICATIONS',
+    title: 'Share the moments that bring us together.',
+    description: 'Prepare church announcements and help everyone stay connected.',
+    pages: ['events', 'communications'],
+  },
+};
+
+type MemberProfile = {
+  first_name: string;
+  last_name: string;
+  email: string | null;
+  phone: string | null;
+  membership_status: string;
+  joined_at: string;
+};
+
+export function OverviewPage({ onNavigate, roles = [] }: { onNavigate: (page: PageId) => void; roles?: string[] }) {
+  const dashboardRole = roles.includes('administrator') || roles.includes('super_administrator')
+    ? null
+    : ['presiding_elder', 'youth_executive', 'media', 'member'].find((role) => roles.includes(role)) ?? null;
+  const dashboard = dashboardRole ? roleDashboards[dashboardRole] : null;
+  const dashboardPages = dashboard?.pages ?? pageSections.flatMap((section) => section.items)
+    .filter(({ id }) => id !== 'overview').slice(0, 6).map(({ id }) => id);
+  const navItems = pageSections.flatMap((section) => section.items);
+  const [memberProfile, setMemberProfile] = useState<MemberProfile | null>(null);
+  const [profileError, setProfileError] = useState('');
+
+  useEffect(() => {
+    const client = supabase;
+    if (dashboardRole !== 'member' || !client) return;
+    let active = true;
+    const loadProfile = async () => {
+      setProfileError('');
+      try {
+        const { data: userResult, error: userError } = await client.auth.getUser();
+        if (userError) throw new Error(`Could not identify your account: ${userError.message}`);
+        if (!userResult.user) throw new Error('Sign in to view your membership profile.');
+        const { data, error } = await client.from('members')
+          .select('first_name,last_name,email,phone,membership_status,joined_at')
+          .eq('user_id', userResult.user.id)
+          .maybeSingle();
+        if (error) throw new Error(`Could not load your membership profile: ${error.message}`);
+        if (active) setMemberProfile(data as MemberProfile | null);
+      } catch (error) {
+        if (active) setProfileError(error instanceof Error ? error.message : 'Could not load your membership profile.');
+      }
+    };
+    void loadProfile();
+    return () => { active = false; };
+  }, [dashboardRole]);
+
   return <>
     <PageHeading page="overview" />
     <section className="welcome-banner glass-card">
       <div className="welcome-copy">
-        <span className="welcome-label"><Icon name="sparkle" size={14} /> ONE CHURCH. MANY WAYS TO CARE.</span>
-        <h2>A little more connected.<br /><span>A lot more cared for.</span></h2>
-        <p>A thoughtful workspace for the people, ministries, and moments that bring your church together.</p>
+        <span className="welcome-label"><Icon name="sparkle" size={14} /> {dashboard?.label ?? 'ONE CHURCH. MANY WAYS TO CARE.'}</span>
+        <h2>{dashboard ? <>{dashboard.title}</> : <>A little more connected.<br /><span>A lot more cared for.</span></>}</h2>
+        <p>{dashboard?.description ?? 'A thoughtful workspace for the people, ministries, and moments that bring your church together.'}</p>
         <div className="welcome-actions">
-          <button className="welcome-action welcome-action-primary" onClick={() => onNavigate('people')}><Icon name="users" size={16} /> Open people workspace <Icon name="arrow-up" size={14} /></button>
-          <button className="welcome-action welcome-action-secondary" onClick={() => onNavigate('attendance')}><Icon name="clipboard" size={16} /> Explore attendance</button>
+          {dashboardPages.slice(0, 2).map((id, index) => {
+            const item = navItems.find((candidate) => candidate.id === id);
+            return item ? <button key={id} className={`welcome-action ${index === 0 ? 'welcome-action-primary' : 'welcome-action-secondary'}`} onClick={() => onNavigate(item.id)}>
+              <Icon name={item.icon} size={16} /> {item.label} {index === 0 && <Icon name="arrow-up" size={14} />}
+            </button> : null;
+          })}
         </div>
       </div>
       <div className="welcome-art" aria-hidden="true">
@@ -46,6 +122,19 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => voi
         <div className="art-caption"><span className="art-live-dot" /> GRACE ASSEMBLY <span>·</span> ONE FAMILY</div>
       </div>
     </section>
+    {dashboardRole === 'member' && (
+      <section className="member-portal-card glass-card" aria-label="My membership profile">
+        <div><span className="eyebrow"><Icon name="contact" size={14} /> MY MEMBERSHIP</span><h2>Your profile</h2></div>
+        {profileError && <p className="workspace-alert" role="alert">{profileError}</p>}
+        {memberProfile
+          ? <div className="member-portal-details">
+            <strong>{memberProfile.first_name} {memberProfile.last_name}</strong>
+            <span>{memberProfile.email ?? 'No email on file'}{memberProfile.phone ? ` · ${memberProfile.phone}` : ''}</span>
+            <span className="member-status status-member">{memberProfile.membership_status}</span>
+          </div>
+          : !profileError && <p>Your membership profile will appear here once it is linked to your account.</p>}
+      </section>
+    )}
     <section className="overview-summary-grid" aria-label="Workspace status">
       <article className="overview-summary"><span className="summary-icon"><Icon name="users" size={18} /></span><span className="summary-label">People & belonging</span><strong>One connected directory</strong><span className="summary-description">Members, visitors, and households have their own workspace.</span></article>
       <article className="overview-summary"><span className="summary-icon"><Icon name="network" size={18} /></span><span className="summary-label">Church & ministry</span><strong>Every team in its place</strong><span className="summary-description">Campuses, departments, ministries, and groups.</span></article>
@@ -54,7 +143,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => voi
     </section>
     <section className="overview-content-grid">
       <div className="overview-panel glass-card">
-        <div className="section-heading"><div><span className="eyebrow">A growing community</span><h2>Every ministry, a place to belong</h2></div><span className="phase-badge"><Icon name="sparkle" size={13} /> Workspaces are taking shape</span></div>
+        <div className="section-heading"><div><span className="eyebrow">A growing community</span><h2>{dashboard ? 'Your role, your workspace' : 'Every ministry, a place to belong'}</h2></div><span className="phase-badge"><Icon name="sparkle" size={13} /> {dashboard ? 'Role-aware dashboard' : 'Workspaces are taking shape'}</span></div>
         <div className="overview-chart-summary"><strong>One shared workspace</strong><span><Icon name="shield" size={14} /> Role-aware foundations</span></div>
         <div className="overview-chart"><div className="chart-y"><span>Care</span><span>Serve</span><span>Grow</span><span>Gather</span></div><div className="overview-chart-area">
           <div className="overview-chart-lines"><i /><i /><i /><i /></div>
@@ -68,7 +157,7 @@ export function OverviewPage({ onNavigate }: { onNavigate: (page: PageId) => voi
       </div>
       <div className="overview-panel overview-next glass-card">
         <div className="section-heading"><div><span className="eyebrow">Your management system</span><h2>Find your workspace</h2></div><BrandMark /></div>
-        <div className="overview-links">{pageSections.flatMap((section) => section.items).filter(({ id }) => id !== 'overview').slice(0, 6).map((item) =>
+        <div className="overview-links">{dashboardPages.map((id) => navItems.find((candidate) => candidate.id === id)).filter((item) => item !== undefined).map((item) =>
           <button className="overview-link" key={item.id} onClick={() => onNavigate(item.id)}><span className="overview-link-icon"><Icon name={item.icon} size={16} /></span><span><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="chevron-right" size={16} /></button>)}</div>
         <button className="text-button overview-all-link" onClick={() => onNavigate('administration')}>Explore the full system <Icon name="arrow-up" size={14} /></button>
       </div>

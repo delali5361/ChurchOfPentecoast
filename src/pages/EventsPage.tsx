@@ -55,7 +55,10 @@ function dateTimeInput(value: string) {
   return local.toISOString().slice(0, 16);
 }
 
-export function EventsPage({ onAction }: { onAction: (message: string) => void }) {
+export function EventsPage({ onAction, roles = [] }: { onAction: (message: string) => void; roles?: string[] }) {
+  const memberPortal = roles.includes('member') && !roles.includes('administrator') && !roles.includes('super_administrator');
+  const canManageEvents = !roles.length || roles.includes('administrator') || roles.includes('super_administrator')
+    || roles.includes('presiding_elder') || roles.includes('media') || roles.includes('pastor') || roles.includes('branch_administrator');
   const [organization, setOrganization] = useState<WorkspaceOrganization | null>(null);
   const [events, setEvents] = useState<ChurchEvent[]>([]);
   const [registrations, setRegistrations] = useState<Registration[]>([]);
@@ -135,7 +138,9 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
   const eventRegistrations = registrations.filter((registration) => registration.event_id === selectedEventId);
   const registered = eventRegistrations.filter((registration) => registration.status !== 'cancelled');
   const upcomingCount = events.filter((event) => event.status === 'scheduled' && new Date(event.starts_at) >= new Date()).length;
-  const totalRegistered = registrations.filter((registration) => registration.status !== 'cancelled').length;
+  const totalRegistered = memberPortal
+    ? events.reduce((total, event) => total + event.attendee_count, 0)
+    : registrations.filter((registration) => registration.status !== 'cancelled').length;
   const branchName = (branchId: string | null) => organization?.branches.find((branch) => branch.id === branchId)?.name ?? 'All branches';
   const eventCounts = new Map(events.map((event) => [event.id, registrations.filter((registration) => registration.event_id === event.id && registration.status !== 'cancelled').length]));
 
@@ -162,7 +167,7 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
     setDialog('event');
   };
   const openRegistration = () => {
-    setRegistrationForm(emptyRegistration);
+    setRegistrationForm(memberPortal && people[0] ? { ...emptyRegistration, member_id: people[0].id } : emptyRegistration);
     setFormError('');
     setDialog('registration');
   };
@@ -354,7 +359,7 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
       {loadError && <div className="people-error" role="alert">{loadError}<button className="text-button" onClick={() => void load()}>Retry</button></div>}
       <section className="events-panel glass-card">
         <div className="events-heading"><div><span className="eyebrow">Services & gatherings</span><h2>Church events</h2><p>Coordinate church-wide gatherings and keep registrations connected to attendance.</p></div>
-          <button className="button button-primary" type="button" onClick={openCreate}><Icon name="plus" size={15} /> Create event</button></div>
+          {canManageEvents && <button className="button button-primary" type="button" onClick={openCreate}><Icon name="plus" size={15} /> Create event</button>}</div>
         <div className="people-toolbar">
           <label className="people-search"><Icon name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search events" aria-label="Search events" /></label>
           <label className="people-filter"><span>Status</span><select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} aria-label="Filter events">
@@ -378,28 +383,30 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
                 <h3>{selectedEvent.title}</h3><p>{formatDateTime(selectedEvent.starts_at)}{selectedEvent.ends_at ? ` – ${new Date(selectedEvent.ends_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}</p>
                 {selectedEvent.location && <p><Icon name="church" size={13} /> {selectedEvent.location}</p>}
                 {selectedEvent.description && <p className="event-description">{selectedEvent.description}</p>}</div>
-                <button className="icon-button" type="button" aria-label="Edit event" onClick={() => openEdit(selectedEvent)}><Icon name="settings" size={16} /></button></div>
-              <div className="event-capacity-row"><span><strong>{registered.length}</strong> registered{selectedEvent.capacity !== null ? ` of ${selectedEvent.capacity}` : ''}</span>
+                {canManageEvents && <button className="icon-button" type="button" aria-label="Edit event" onClick={() => openEdit(selectedEvent)}><Icon name="settings" size={16} /></button>}</div>
+              <div className="event-capacity-row"><span><strong>{memberPortal ? selectedEvent.attendee_count : registered.length}</strong> registered{selectedEvent.capacity !== null ? ` of ${selectedEvent.capacity}` : ''}</span>
                 <span>{selectedEvent.registration_required ? 'Registration required' : 'Walk-ins welcome'}</span></div>
               <div className="event-detail-actions">
-                {selectedEvent.status === 'scheduled' && <><button className="button button-primary" type="button" disabled={selectedEvent.capacity !== null && registered.length >= selectedEvent.capacity} onClick={openRegistration}><Icon name="user-plus" size={14} /> Register attendee</button>
-                  <button className="button button-ghost" type="button" onClick={() => void updateEventStatus(selectedEvent, 'completed')}>Mark completed</button>
-                  <button className="text-button cancel-event-button" type="button" onClick={() => void updateEventStatus(selectedEvent, 'cancelled')}>Cancel event</button></>}
-                {selectedEvent.status === 'cancelled' && <button className="button button-ghost" type="button" onClick={() => void updateEventStatus(selectedEvent, 'scheduled')}>Restore event</button>}
+                {selectedEvent.status === 'scheduled' && <>{(canManageEvents || memberPortal) && <button className="button button-primary" type="button" disabled={selectedEvent.capacity !== null && (memberPortal ? selectedEvent.attendee_count : registered.length) >= selectedEvent.capacity || memberPortal && registered.some((registration) => registration.member_id === people[0]?.id)} onClick={openRegistration}><Icon name="user-plus" size={14} /> Register {memberPortal ? 'yourself' : 'attendee'}</button>}
+                  {canManageEvents && <>
+                    <button className="button button-ghost" type="button" onClick={() => void updateEventStatus(selectedEvent, 'completed')}>Mark completed</button>
+                    <button className="text-button cancel-event-button" type="button" onClick={() => void updateEventStatus(selectedEvent, 'cancelled')}>Cancel event</button>
+                  </>}</>}
+                {canManageEvents && selectedEvent.status === 'cancelled' && <button className="button button-ghost" type="button" onClick={() => void updateEventStatus(selectedEvent, 'scheduled')}>Restore event</button>}
               </div>
               <div className="event-registrations-heading"><h4>Registrations</h4><span>{eventRegistrations.length}</span></div>
               <div className="event-registrations">
-                {eventRegistrations.map((registration) => <article className={`event-registration ${registration.status}`} key={registration.id}>
+                {eventRegistrations.filter((registration) => !memberPortal || registration.member_id === people[0]?.id).map((registration) => <article className={`event-registration ${registration.status}`} key={registration.id}>
                   <span className="household-person-avatar">{registration.attendee_name.split(/\s+/).slice(0, 2).map((part) => part.slice(0, 1)).join('').toUpperCase()}</span>
                   <div className="household-person-copy"><strong>{registration.attendee_name}</strong><small>{registration.email || registration.phone || 'No contact details'}</small></div>
                   <span className={`member-status status-${registration.status === 'cancelled' ? 'inactive' : registration.status === 'attended' ? 'member' : 'newcomer'}`}>{registration.status}</span>
-                  {selectedEvent.status === 'scheduled' && registration.status !== 'cancelled' && <button className="text-button" type="button" onClick={() => void updateRegistration(registration, registration.status === 'attended' ? 'registered' : 'attended')}>{registration.status === 'attended' ? 'Undo attendance' : 'Mark attended'}</button>}
-                  {selectedEvent.status === 'scheduled' && registration.status === 'registered' && <button className="icon-button attendance-remove" type="button" aria-label={`Cancel ${registration.attendee_name} registration`} onClick={() => void updateRegistration(registration, 'cancelled')}><Icon name="close" size={15} /></button>}
+                  {canManageEvents && selectedEvent.status === 'scheduled' && registration.status !== 'cancelled' && <button className="text-button" type="button" onClick={() => void updateRegistration(registration, registration.status === 'attended' ? 'registered' : 'attended')}>{registration.status === 'attended' ? 'Undo attendance' : 'Mark attended'}</button>}
+                  {canManageEvents && selectedEvent.status === 'scheduled' && registration.status === 'registered' && <button className="icon-button attendance-remove" type="button" aria-label={`Cancel ${registration.attendee_name} registration`} onClick={() => void updateRegistration(registration, 'cancelled')}><Icon name="close" size={15} /></button>}
                 </article>)}
                 {!eventRegistrations.length && <div className="household-empty">No registrations yet.</div>}
               </div>
             </> : <div className="household-no-selection"><span className="household-icon"><Icon name="calendar" size={22} /></span><h2>Events calendar</h2>
-              <p>Create an event, manage registrations, and connect its attendance session.</p><button className="button button-primary" type="button" onClick={openCreate}><Icon name="plus" size={15} /> Create event</button></div>}
+              <p>{canManageEvents ? 'Create an event, manage registrations, and connect its attendance session.' : 'Browse upcoming gatherings and register your attendance.'}</p>{canManageEvents && <button className="button button-primary" type="button" onClick={openCreate}><Icon name="plus" size={15} /> Create event</button>}</div>}
           </section>
         </div>
       </section>
@@ -425,11 +432,11 @@ export function EventsPage({ onAction }: { onAction: (message: string) => void }
           <div className="member-form-actions"><button className="button button-ghost" type="button" disabled={saving} onClick={() => setDialog(null)}>Cancel</button><button className="button button-primary" disabled={saving}>{saving ? 'Saving…' : editingEvent ? 'Save changes' : 'Create event'}</button></div>
         </form> : <form className="member-form" onSubmit={(event) => void submitRegistration(event)}>
           <div className="member-form-grid">
-            <label>Church member / visitor<select value={registrationForm.member_id} onChange={(event) => setRegistrationForm((current) => ({ ...current, member_id: event.target.value }))}><option value="">Guest (enter details below)</option>
+            <label>Church member / visitor<select value={registrationForm.member_id} onChange={(event) => setRegistrationForm((current) => ({ ...current, member_id: event.target.value }))}>{!memberPortal && <option value="">Guest (enter details below)</option>}
               {people.filter((person) => !eventRegistrations.some((registration) => registration.member_id === person.id && registration.status !== 'cancelled')
                 && (!selectedEvent?.branch_id || !person.branch_id || person.branch_id === selectedEvent.branch_id)).map((person) =>
                 <option key={person.id} value={person.id}>{person.first_name} {person.last_name} · {person.membership_status}</option>)}</select></label>
-            {!registrationForm.member_id && <>
+            {!registrationForm.member_id && !memberPortal && <>
               <label>Guest name<input required autoFocus maxLength={160} value={registrationForm.attendee_name} onChange={(event) => setRegistrationForm((current) => ({ ...current, attendee_name: event.target.value }))} /></label>
               <label>Email<input type="email" maxLength={254} value={registrationForm.email} onChange={(event) => setRegistrationForm((current) => ({ ...current, email: event.target.value }))} /></label>
               <label>Phone<input type="tel" maxLength={40} value={registrationForm.phone} onChange={(event) => setRegistrationForm((current) => ({ ...current, phone: event.target.value }))} /></label>

@@ -10,7 +10,9 @@ import { EventsPage } from './pages/EventsPage';
 import { FinancePage } from './pages/FinancePage';
 import { HouseholdsPage } from './pages/HouseholdsPage';
 import { OverviewPage } from './pages/OverviewPage';
-import { OnboardingPage } from './pages/OnboardingPage';
+import { LandingPage } from './pages/LandingPage';
+import { MemberHomePage } from './pages/MemberHomePage';
+import { MemberPortalPage } from './pages/MemberPortalPage';
 import { PastoralCarePage } from './pages/PastoralCarePage';
 import { PeoplePage } from './pages/PeoplePage';
 import { ReportsPage } from './pages/ReportsPage';
@@ -18,10 +20,10 @@ import { SignInPage } from './pages/SignInPage';
 import { StructurePage } from './pages/StructurePage';
 import { VisitorsPage } from './pages/VisitorsPage';
 import type { PageId } from './types';
-import { getCurrentUserRoles } from './auth';
+import { getCurrentUserRoles, getRoleAccessiblePages } from './auth';
 import { supabase } from './supabase';
 
-const pageComponents: Partial<Record<PageId, (props: { onAction: (message: string) => void }) => JSX.Element | null>> = {
+const pageComponents: Partial<Record<PageId, (props: { onAction: (message: string) => void; roles?: string[] }) => JSX.Element | null>> = {
   people: PeoplePage,
   visitors: VisitorsPage,
   households: HouseholdsPage,
@@ -38,6 +40,8 @@ const pageComponents: Partial<Record<PageId, (props: { onAction: (message: strin
 function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authReady, setAuthReady] = useState(!supabase);
+  const [publicView, setPublicView] = useState<'landing' | 'sign-in' | 'sign-up'>('landing');
+  const [previewEntered, setPreviewEntered] = useState(false);
   const [activePage, setActivePage] = useState<PageId>('overview');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -46,7 +50,6 @@ function App() {
   const [roleReady, setRoleReady] = useState(!supabase);
   const [workspaceError, setWorkspaceError] = useState('');
   const [toast, setToast] = useState('');
-  const [showOnboarding, setShowOnboarding] = useState(false);
   const toastTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -116,8 +119,15 @@ function App() {
     if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current);
   }, []);
 
+  const accessiblePages = useMemo(() => roles.length
+    ? getRoleAccessiblePages(roles)
+    : !supabase ? null : session ? ['overview'] as PageId[] : null, [roles, session]);
   const navigationItems = useMemo(() => pageSections.flatMap((section) => section.items)
-    .filter((item) => `${item.label} ${item.description}`.toLowerCase().includes(searchQuery.trim().toLowerCase())), [searchQuery]);
+    .filter((item) => {
+      return (!item.id.startsWith('member-') || roles.includes('member'))
+        && (!accessiblePages || accessiblePages.includes(item.id))
+        && `${item.label} ${item.description}`.toLowerCase().includes(searchQuery.trim().toLowerCase());
+    }), [accessiblePages, roles, searchQuery]);
 
   const notify = (message: string) => {
     setToast(message);
@@ -125,7 +135,13 @@ function App() {
     toastTimer.current = window.setTimeout(() => setToast(''), 3800);
   };
   const signOut = async () => {
-    if (!supabase) return;
+    if (!supabase) {
+      setRoles([]);
+      setActivePage('overview');
+      setPreviewEntered(false);
+      setPublicView('landing');
+      return;
+    }
     try {
       const { error } = await supabase.auth.signOut();
       if (error) notify(`Could not sign out: ${error.message}`);
@@ -133,31 +149,69 @@ function App() {
       notify(`Could not sign out: ${error instanceof Error ? error.message : 'Unknown authentication error.'}`);
     }
   };
-  const canSeePastoral = !supabase || roles.includes('administrator') || roles.includes('pastoral_care_officer');
-  const administratorName = session?.user.email ?? 'Church administrator';
+  const canSeePastoral = !supabase || roles.includes('administrator') || roles.includes('pastor') || roles.includes('pastoral_care_officer');
+  const administratorName = session?.user.email
+    ?? (roles.includes('member') ? 'Grace Assembly Member' : 'Church administrator');
+  const navigateToPage = (page: PageId) => {
+    if (!accessiblePages || accessiblePages.includes(page)) setActivePage(page);
+  };
+
+  useEffect(() => {
+    if (accessiblePages && !accessiblePages.includes(activePage)) setActivePage('overview');
+  }, [activePage, accessiblePages]);
 
   if (!authReady) return <div className="auth-loading"><span className="loading-spinner" /><span>Preparing your workspace</span></div>;
-  if (supabase && !session) return <SignInPage client={supabase} onStartOnboarding={() => setShowOnboarding(true)} />;
-  if (showOnboarding) return <OnboardingPage onComplete={() => setShowOnboarding(false)} />;
+  if (supabase && !session) {
+    if (publicView === 'landing') return <LandingPage onSignIn={() => setPublicView('sign-in')} onSignUp={() => setPublicView('sign-up')} />;
+    return <SignInPage client={supabase} initialMode={publicView} onBack={() => setPublicView('landing')} />;
+  }
+  if (!supabase && !previewEntered) {
+    if (publicView !== 'landing') {
+      return <SignInPage
+        client={null}
+        initialMode={publicView}
+        onBack={() => setPublicView('landing')}
+        onPreviewAccess={() => {
+          setPublicView('landing');
+          setRoles(['member']);
+          setPreviewEntered(true);
+        }}
+      />;
+    }
+    return <LandingPage
+      previewMode
+      onSignIn={() => setPublicView('sign-in')}
+      onSignUp={() => setPublicView('sign-up')}
+      onEnterPreview={() => {
+        setRoles(['member']);
+        setPreviewEntered(true);
+      }}
+    />;
+  }
   if (supabase && !roleReady) return <div className="auth-loading"><span className="loading-spinner" /><span>Checking your workspace access</span></div>;
 
   const PageComponent = pageComponents[activePage];
   return <>
-    <AppShell activePage={activePage} onNavigate={setActivePage} menuOpen={menuOpen} onMenuOpen={() => setMenuOpen(true)}
+    <AppShell activePage={activePage} onNavigate={navigateToPage} menuOpen={menuOpen} onMenuOpen={() => setMenuOpen(true)}
       onMenuClose={() => setMenuOpen(false)} administratorName={administratorName} canSeePastoral={canSeePastoral}
-      onSignOut={() => { void signOut(); }} onSearch={() => { setSearchQuery(''); setSearchOpen(true); }}>
+      onSignOut={() => { void signOut(); }} onSearch={() => { setSearchQuery(''); setSearchOpen(true); }}
+      roles={roles} accessiblePages={accessiblePages}>
       {workspaceError && <div className="workspace-alert" role="alert"><Icon name="shield" size={17} /><span>{workspaceError}</span><button className="icon-button" onClick={() => setWorkspaceError('')} aria-label="Dismiss message"><Icon name="close" size={16} /></button></div>}
       {activePage === 'overview'
-        ? <OverviewPage onNavigate={setActivePage} />
+        ? roles.includes('member') && !roles.includes('administrator') && !roles.includes('super_administrator')
+          ? <MemberHomePage onNavigate={navigateToPage} />
+          : <OverviewPage onNavigate={navigateToPage} roles={roles} />
+        : activePage.startsWith('member-')
+          ? <MemberPortalPage page={activePage} onAction={notify} onNavigate={navigateToPage} />
         : PageComponent
-          ? <PageComponent onAction={notify} />
-          : <OverviewPage onNavigate={setActivePage} />}
+          ? <PageComponent onAction={notify} roles={roles} />
+          : <OverviewPage onNavigate={navigateToPage} roles={roles} />}
     </AppShell>
     {searchOpen && <div className="search-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
       <section className="search-dialog" role="dialog" aria-modal="true" aria-label="Search church workspaces">
         <label className="global-search-field"><Icon name="search" size={19} /><input autoFocus value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search church workspaces..." aria-label="Search church workspaces" /><kbd>ESC</kbd></label>
         <span className="search-section-label">{searchQuery ? 'Matching workspaces' : 'Navigate to a workspace'}</span>
-        <div className="search-results">{navigationItems.map((item) => <button key={item.id} className="search-result" onClick={() => { setActivePage(item.id); setSearchOpen(false); }}>
+        <div className="search-results">{navigationItems.map((item) => <button key={item.id} className="search-result" onClick={() => { navigateToPage(item.id); setSearchOpen(false); }}>
           <span className="search-result-icon"><Icon name={item.icon} size={17} /></span><span><strong>{item.label}</strong><small>{item.description}</small></span><Icon name="chevron-right" size={16} />
         </button>)}{!navigationItems.length && <div className="search-empty">No workspaces match that search. Try a different term.</div>}</div>
         <div className="search-dialog-footer"><Icon name="sparkle" size={13} /> Search across church workspaces</div>

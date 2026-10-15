@@ -4,7 +4,7 @@ import { pageSections } from '../navigation';
 import { Icon } from './Icon';
 import { Sidebar } from './Sidebar';
 
-export function AppShell({ activePage, onNavigate, children, menuOpen, onMenuOpen, onMenuClose, administratorName, canSeePastoral, onSignOut, onSearch }: {
+export function AppShell({ activePage, onNavigate, children, menuOpen, onMenuOpen, onMenuClose, administratorName, canSeePastoral, onSignOut, onSearch, roles, accessiblePages }: {
   activePage: PageId;
   onNavigate: (page: PageId) => void;
   children: ReactNode;
@@ -15,16 +15,20 @@ export function AppShell({ activePage, onNavigate, children, menuOpen, onMenuOpe
   canSeePastoral: boolean;
   onSignOut: () => void;
   onSearch: () => void;
+  roles: string[];
+  accessiblePages: PageId[] | null;
 }) {
   const currentPage = pageSections.flatMap((section) => section.items).find((item) => item.id === activePage);
+  const memberPortal = roles.includes('member') && !roles.includes('administrator') && !roles.includes('super_administrator');
   return <div className="app-shell">
     <div className="ambient ambient-one" /><div className="ambient ambient-two" />
     <Sidebar activePage={activePage} onNavigate={onNavigate} open={menuOpen} onClose={onMenuClose}
-      administratorName={administratorName} canSeePastoral={canSeePastoral} onSignOut={onSignOut} />
+      administratorName={administratorName} canSeePastoral={canSeePastoral} onSignOut={onSignOut}
+      roles={roles} accessiblePages={accessiblePages} />
     <main className="main-content">
       <header className="topbar">
         <button className="icon-button menu-button" onClick={onMenuOpen} aria-label="Open navigation"><Icon name="menu" size={21} /></button>
-        <div className="breadcrumb"><span>Grace Assembly</span><span aria-hidden="true">/</span><strong>{currentPage?.label ?? 'Overview'}</strong></div>
+        <div className="breadcrumb"><span>Grace Assembly</span><span aria-hidden="true">/</span><strong>{memberPortal && activePage === 'overview' ? 'My Church' : currentPage?.label ?? 'Overview'}</strong></div>
         <div className="topbar-actions">
           <button className="search-trigger" onClick={onSearch}><Icon name="search" size={16} /><span>Search anything</span><kbd><Icon name="command" size={11} /> K</kbd></button>
           <span className="workspace-indicator"><span className="live-dot" /> <span>Workspace</span></span>

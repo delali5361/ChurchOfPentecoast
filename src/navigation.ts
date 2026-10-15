@@ -28,4 +28,16 @@ export const pageSections: PageSection[] = [
       { id: 'administration', label: 'Administration', description: 'Settings and access control', icon: 'settings' },
     ],
   },
+  {
+    label: 'Member portal',
+    items: [
+      { id: 'member-giving', label: 'Giving', description: 'Tithes, offerings, and giving history', icon: 'giving' },
+      { id: 'member-updates', label: 'Church updates', description: 'Targeted announcements and messages', icon: 'messages' },
+      { id: 'member-profile', label: 'My profile & household', description: 'Contact details and household information', icon: 'user' },
+      { id: 'member-attendance', label: 'My attendance', description: 'Check-in history and service reminders', icon: 'clipboard' },
+      { id: 'member-ministries', label: 'Ministries & serving', description: 'Discover groups and volunteer', icon: 'network' },
+      { id: 'member-care', label: 'Prayer & care request', description: 'Privately request pastoral support', icon: 'heart' },
+      { id: 'member-notifications', label: 'Notification preferences', description: 'Manage announcements and reminders', icon: 'bell' },
+    ],
+  },
 ];

@@ -10,7 +10,14 @@ export type PageId =
   | 'communications'
   | 'pastoral-care'
   | 'reports'
-  | 'administration';
+  | 'administration'
+  | 'member-giving'
+  | 'member-updates'
+  | 'member-profile'
+  | 'member-attendance'
+  | 'member-ministries'
+  | 'member-care'
+  | 'member-notifications';
 
 export type PageSection = {
   label: string;
