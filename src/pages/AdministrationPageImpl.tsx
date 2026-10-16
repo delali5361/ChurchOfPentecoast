@@ -1,17 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import { Icon } from '../components/Icon';
 import { PageHeading } from '../components/PageHeading';
+import { createPreviewId, getPreviewOrganization, readPreviewRows, writePreviewRows, type PreviewAccount } from '../data/previewStore';
 import { getCurrentOrganization, type WorkspaceOrganization } from '../data/workspace';
 import { supabase } from '../supabase';
 
 type AdminTab = 'overview' | 'users' | 'roles' | 'audit' | 'organization';
 type Permission = { id: string; code: string; name: string; description: string | null; resource: string; action: string };
 type Role = { id: string; code: string; name: string; description: string | null; precedence: number; is_system_role: boolean };
-type UserProfile = { id: string; preferred_name: string | null; phone: string | null; status: 'active' | 'inactive' | 'suspended'; last_login_at: string | null; created_at: string };
+type UserProfile = { id: string; preferred_name: string | null; phone: string | null; email?: string | null; status: 'active' | 'inactive' | 'suspended' | 'pending'; last_login_at: string | null; created_at: string };
 type Assignment = { id: string; user_id: string; app_role_id: string; branch_id: string | null; assigned_at: string | null };
 type AuditEntry = { id: string; user_id: string | null; action: string; resource: string; resource_id: string | null; entity_type: string; created_at: string };
+type PreviewStaffInvite = { id: string; name: string; email: string; roleCode: string; branchId: string | null; status: 'pending'; createdAt: string };
 
 const userStatuses: UserProfile['status'][] = ['active', 'inactive', 'suspended'];
+const previewRoles: Role[] = [
+  { id: 'preview-role-presiding_elder', code: 'presiding_elder', name: 'Presiding Elder', description: 'Church-wide leadership and oversight', precedence: 15, is_system_role: true },
+  { id: 'preview-role-youth_executive', code: 'youth_executive', name: 'Youth Executive', description: 'Youth ministry leadership', precedence: 35, is_system_role: true },
+  { id: 'preview-role-media', code: 'media', name: 'Media', description: 'Church media and communications', precedence: 45, is_system_role: true },
+  { id: 'preview-role-pastor', code: 'pastor', name: 'Pastor', description: 'Pastoral care and church leadership', precedence: 50, is_system_role: true },
+  { id: 'preview-role-branch_administrator', code: 'branch_administrator', name: 'Branch Administrator', description: 'Branch-level administration', precedence: 60, is_system_role: true },
+  { id: 'preview-role-department_leader', code: 'department_leader', name: 'Department Leader', description: 'Department coordination', precedence: 70, is_system_role: true },
+  { id: 'preview-role-group_leader', code: 'group_leader', name: 'Group Leader', description: 'Ministry or group coordination', precedence: 80, is_system_role: true },
+  { id: 'preview-role-worker', code: 'worker', name: 'Worker', description: 'Church service team member', precedence: 90, is_system_role: true },
+  { id: 'preview-role-finance_officer', code: 'finance_officer', name: 'Finance Officer', description: 'Finance operations', precedence: 95, is_system_role: true },
+  { id: 'preview-role-communication_officer', code: 'communication_officer', name: 'Communications Officer', description: 'Church communications', precedence: 96, is_system_role: true },
+  { id: 'preview-role-pastoral_care_officer', code: 'pastoral_care_officer', name: 'Pastoral Care Officer', description: 'Pastoral care coordination', precedence: 97, is_system_role: true },
+];
 
 function formatDate(value: string | null) {
   if (!value) return 'Never';
@@ -31,6 +47,12 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
   const [selectedUser, setSelectedUser] = useState('');
   const [selectedAssignmentRole, setSelectedAssignmentRole] = useState('');
   const [selectedBranch, setSelectedBranch] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteUsername, setInviteUsername] = useState('');
+  const [invitePassword, setInvitePassword] = useState('');
+  const [inviteRole, setInviteRole] = useState('');
+  const [inviteBranch, setInviteBranch] = useState('');
   const [tab, setTab] = useState<AdminTab>('overview');
   const [canManageUsers, setCanManageUsers] = useState(false);
   const [canManageRoles, setCanManageRoles] = useState(false);
@@ -44,7 +66,32 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
   const load = useCallback(async () => {
     const client = supabase;
     if (!client) {
-      setLoading(false);
+      setLoading(true);
+      setLoadError('');
+      try {
+        const branches = [
+          { id: 'preview-branch-main', name: 'Main Assembly' },
+          { id: 'preview-branch-north', name: 'North Branch' },
+        ];
+        const previewProfiles = readPreviewRows<UserProfile>('admin_staff_profiles');
+        const profileIds = previewProfiles.map((profile) => profile.id);
+        setOrganization(getPreviewOrganization(branches));
+        setCurrentUserId('');
+        setProfiles(previewProfiles);
+        setRoles(previewRoles);
+        setPermissions([]);
+        setAssignments(readPreviewRows<Assignment>('admin_staff_assignments').filter((assignment) => profileIds.includes(assignment.user_id)));
+        setAuditEntries([]);
+        setCanManageUsers(true);
+        setCanManageRoles(true);
+        setCanViewAudit(true);
+        setIsSuperAdministrator(false);
+        setLoaded(true);
+      } catch (error) {
+        setLoadError(error instanceof Error ? error.message : 'Could not load Admin preview data.');
+      } finally {
+        setLoading(false);
+      }
       return;
     }
     setLoading(true);
@@ -162,7 +209,18 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
   }, [canManageRoles, selectedRole]);
 
   const statusChange = async (profile: UserProfile, status: UserProfile['status']) => {
-    if (!supabase || !canManageUsers) return;
+    if (!canManageUsers) return;
+    if (!supabase) {
+      try {
+        const updatedProfiles = profiles.map((item) => item.id === profile.id ? { ...item, status } : item);
+        writePreviewRows('admin_staff_profiles', updatedProfiles);
+        setProfiles(updatedProfiles);
+        onAction(`Preview account status updated to ${status}.`);
+      } catch (error) {
+        onAction(`Could not update preview status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+      return;
+    }
     if (profile.id === currentUserId) {
       onAction('You cannot change your own account status from this screen.');
       return;
@@ -180,8 +238,80 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
     }
   };
 
+  const createStaffInvitation = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (supabase) {
+      onAction('Staff invitations need a trusted server-side invite endpoint. No account or email was created.');
+      return;
+    }
+    const role = roles.find((item) => item.id === inviteRole);
+    if (!role || role.code === 'member' || ['administrator', 'super_administrator'].includes(role.code)) {
+      onAction('Choose an existing non-member staff role.');
+      return;
+    }
+    const email = inviteEmail.trim().toLowerCase();
+    const username = inviteUsername.trim().toLowerCase();
+    if (!username || !invitePassword || invitePassword.length < 8) {
+      onAction('Enter a username and an initial password of at least 8 characters.');
+      return;
+    }
+    if (readPreviewRows<PreviewAccount>('preview_accounts').some((account) => account.username.toLowerCase() === username)) {
+      onAction('That preview username is already in use.');
+      return;
+    }
+    if (profiles.some((profile) => profile.email?.toLowerCase() === email)) {
+      onAction('A preview account with that email already exists.');
+      return;
+    }
+    const id = createPreviewId();
+    const createdAt = new Date().toISOString();
+    const previewAccount: PreviewAccount = {
+      id,
+      username,
+      email,
+      password: invitePassword,
+      role: role.code,
+      mustChangePassword: true,
+      createdAt,
+    };
+    const existingAccounts = readPreviewRows<PreviewAccount>('preview_accounts');
+    const nextAccounts = [...existingAccounts.filter((account) => account.email !== email), previewAccount];
+    const nextProfiles = [...profiles, {
+      id,
+      preferred_name: inviteName.trim(),
+      phone: null,
+      email,
+      status: 'pending' as const,
+      last_login_at: null,
+      created_at: createdAt,
+    }];
+    const nextAssignments = [...assignments, {
+      id: createPreviewId(),
+      user_id: id,
+      app_role_id: role.id,
+      branch_id: inviteBranch || null,
+      assigned_at: createdAt,
+    }];
+    try {
+      writePreviewRows('admin_staff_profiles', nextProfiles);
+      writePreviewRows('admin_staff_assignments', nextAssignments);
+      writePreviewRows('preview_accounts', nextAccounts);
+      setProfiles(nextProfiles);
+      setAssignments(nextAssignments);
+      setInviteName('');
+      setInviteEmail('');
+      setInviteUsername('');
+      setInvitePassword('');
+      setInviteRole('');
+      setInviteBranch('');
+      onAction(`Preview staff account prepared for ${username}. The initial password was saved locally and must be changed at first sign-in.`);
+    } catch (error) {
+      onAction(`Could not save preview invitation: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   const assignRole = async () => {
-    if (!supabase || !organization || !canManageRoles || !selectedUser || !selectedAssignmentRole) return;
+    if (!organization || !canManageRoles || !selectedUser || !selectedAssignmentRole) return;
     const role = roles.find((item) => item.id === selectedAssignmentRole);
     if (!role) return;
     if (!isSuperAdministrator && ['administrator', 'super_administrator'].includes(role.code)) {
@@ -191,6 +321,23 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
     const branchId = selectedBranch || null;
     if (assignments.some((item) => item.user_id === selectedUser && item.app_role_id === selectedAssignmentRole && item.branch_id === branchId)) {
       onAction('That role is already assigned for the selected scope.');
+      return;
+    }
+    if (!supabase) {
+      try {
+        const nextAssignments = [...assignments, {
+          id: createPreviewId(),
+          user_id: selectedUser,
+          app_role_id: selectedAssignmentRole,
+          branch_id: branchId,
+          assigned_at: new Date().toISOString(),
+        }];
+        writePreviewRows('admin_staff_assignments', nextAssignments);
+        setAssignments(nextAssignments);
+        onAction(`Preview role assignment created: ${role.name}.`);
+      } catch (error) {
+        onAction(`Could not save preview role assignment: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
       return;
     }
     setSaving(true);
@@ -215,12 +362,23 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
   };
 
   const removeAssignment = async (assignment: Assignment & { role?: Role }) => {
-    if (!supabase || !canManageRoles || !assignment.role) return;
+    if (!canManageRoles || !assignment.role) return;
     if (!isSuperAdministrator && ['administrator', 'super_administrator'].includes(assignment.role.code)) {
       onAction('Only a super administrator can remove administrator-level roles.');
       return;
     }
     if (!window.confirm(`Remove the ${assignment.role.name} role from this account?`)) return;
+    if (!supabase) {
+      try {
+        const nextAssignments = assignments.filter((item) => item.id !== assignment.id);
+        writePreviewRows('admin_staff_assignments', nextAssignments);
+        setAssignments(nextAssignments);
+        onAction(`Preview ${assignment.role.name} role removed.`);
+      } catch (error) {
+        onAction(`Could not remove preview role: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+      return;
+    }
     setSaving(true);
     try {
       const { error } = await supabase.from('user_roles').delete().eq('id', assignment.id);
@@ -270,6 +428,7 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
   const canOpen = canManageUsers || canManageRoles || canViewAudit;
   const systemRoles = roles.filter((role) => role.is_system_role);
   const enabledUsers = profiles.filter((profile) => profile.status === 'active').length;
+  const staffRoles = roles.filter((role) => role.code !== 'member' && !['administrator', 'super_administrator'].includes(role.code));
 
   const tabs: [AdminTab, string, string][] = [
     ['overview', 'Overview', 'activity'],
@@ -282,7 +441,7 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
   return <>
     <PageHeading page="administration" />
     <div className="admin-workspace">
-      {!supabase && <div className="preview-notice" role="status"><Icon name="database" size={17} /><span>Preview mode — connect Supabase to manage access or view audit history.</span></div>}
+      {!supabase && <div className="preview-notice" role="status"><Icon name="database" size={17} /><span>Admin preview — changes are saved only in this browser. No accounts are authenticated, no invitations are emailed, and this preview does not grant real Admin access.</span></div>}
       {loadError && <div className="workspace-alert" role="alert">{loadError}</div>}
 
       {supabase && loaded && !canOpen ? (
@@ -295,7 +454,7 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
         {loading ? <div className="module-loading"><span className="loading-spinner" /><span>Loading administration</span></div> : <>
           {tab === 'overview' && <div className="admin-overview">
             <section className="admin-kpis">
-              <article><span><Icon name="users" size={17} /> User accounts</span><strong>{profiles.length}</strong><small>{enabledUsers} active in this organization</small></article>
+              <article><span><Icon name="users" size={17} /> Staff accounts</span><strong>{profiles.length}</strong><small>{enabledUsers} active · {profiles.filter((profile) => profile.status === 'pending').length} preview invitations pending</small></article>
               <article><span><Icon name="lock" size={17} /> System roles</span><strong>{systemRoles.length}</strong><small>Configured church responsibilities</small></article>
               <article><span><Icon name="network" size={17} /> Branches</span><strong>{organization?.branches.length ?? 0}</strong><small>Active organization locations</small></article>
               <article><span><Icon name="database" size={17} /> Audit events</span><strong>{!supabase ? '—' : canViewAudit ? auditEntries.length : 'Restricted'}</strong><small>{!supabase ? 'Available when connected' : canViewAudit ? 'Most recent retained events' : 'Audit permission required'}</small></article>
@@ -309,21 +468,36 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
           {tab === 'users' && <section className="admin-section">
             <div className="section-header"><div><span className="eyebrow">Accounts & responsibilities</span><h2>Users and access</h2></div><span className="admin-section-count">{profiles.length} accounts</span></div>
             {!canManageUsers && supabase && <div className="admin-inline-notice"><Icon name="lock" size={16} /> User account management requires the administration.users permission.</div>}
+            {canManageUsers && <form className="admin-assign-form admin-invite-form glass-card" onSubmit={createStaffInvitation}>
+              <div><h3>Invite a staff account</h3><p>Choose an existing non-member role. Public member registration stays separate.</p></div>
+              <div className="admin-assign-fields">
+                <label>Name<input required maxLength={120} value={inviteName} onChange={(event) => setInviteName(event.target.value)} placeholder="Staff member name" /></label>
+                <label>Email<input required type="email" maxLength={254} value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="name@example.com" /></label>
+                <label>Username<input required maxLength={60} value={inviteUsername} onChange={(event) => setInviteUsername(event.target.value)} placeholder="staff.username" autoComplete="off" /></label>
+                <label>Initial password<input required type="password" minLength={8} value={invitePassword} onChange={(event) => setInvitePassword(event.target.value)} placeholder="At least 8 characters" autoComplete="new-password" /></label>
+                <label>Staff role<select required value={inviteRole} onChange={(event) => setInviteRole(event.target.value)}><option value="">Select role</option>{staffRoles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
+                <label>Branch scope<select value={inviteBranch} onChange={(event) => setInviteBranch(event.target.value)}><option value="">All branches</option>{organization?.branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
+                <button className="button button-primary" type="submit" disabled={saving || !staffRoles.length}><Icon name="user-plus" size={15} />{supabase ? 'Invite staff' : 'Save preview invitation'}</button>
+              </div>
+              {supabase
+                ? <div className="admin-inline-notice"><Icon name="lock" size={16} /> A trusted server-side invite service is required. Submitting will not create an account or send email.</div>
+                : <div className="admin-inline-notice"><Icon name="info" size={16} /> Preview only: invitation details are stored in this browser; no email is sent and no account is activated.</div>}
+            </form>}
             {canManageRoles && <div className="admin-assign-form glass-card">
               <h3>Assign a role</h3>
               <div className="admin-assign-fields">
                 <label>User<select value={selectedUser} onChange={(event) => setSelectedUser(event.target.value)}><option value="">Select account</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.preferred_name || `Account ${profile.id.slice(0, 8)}`} · {profile.status}</option>)}</select></label>
-                <label>Role<select value={selectedAssignmentRole} onChange={(event) => setSelectedAssignmentRole(event.target.value)}><option value="">Select role</option>{roles.filter((role) => isSuperAdministrator || !['administrator', 'super_administrator'].includes(role.code)).map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
+                <label>Role<select value={selectedAssignmentRole} onChange={(event) => setSelectedAssignmentRole(event.target.value)}><option value="">Select role</option>{roles.filter((role) => role.code !== 'member' && (isSuperAdministrator || !['administrator', 'super_administrator'].includes(role.code))).map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label>
                 <label>Branch scope<select value={selectedBranch} onChange={(event) => setSelectedBranch(event.target.value)}><option value="">All branches</option>{organization?.branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></label>
-                <button className="button button-primary" disabled={!supabase || saving || !selectedUser || !selectedAssignmentRole} onClick={() => void assignRole()}><Icon name="plus" size={15} /> Assign role</button>
+                <button className="button button-primary" disabled={saving || !selectedUser || !selectedAssignmentRole} onClick={() => void assignRole()}><Icon name="plus" size={15} /> Assign role</button>
               </div>
             </div>}
             <div className="admin-user-list">
-              {profiles.length === 0 ? <div className="admin-empty glass-card"><Icon name="users" size={24} /><strong>{supabase ? 'No user profiles available' : 'Preview: user accounts'}</strong><span>{supabase ? 'No user profiles are visible to your account.' : 'User access and role assignments appear here after connecting Supabase.'}</span></div> :
+              {profiles.length === 0 ? <div className="admin-empty glass-card"><Icon name="users" size={24} /><strong>{supabase ? 'No user profiles available' : 'No preview staff yet'}</strong><span>{supabase ? 'No user profiles are visible to your account.' : 'Create a local preview invitation above to explore staff role assignments.'}</span></div> :
                 profiles.map((profile) => <article className="admin-user-card glass-card" key={profile.id}>
-                  <div className="admin-user-main"><span className="admin-user-avatar">{(profile.preferred_name?.trim()[0] ?? profile.id[0]).toUpperCase()}</span><div><strong>{profile.preferred_name || `Account ${profile.id.slice(0, 8)}`}</strong><small>{profile.phone || `ID ${profile.id.slice(0, 12)}…`} · Last sign-in {formatDate(profile.last_login_at)}</small></div></div>
+                  <div className="admin-user-main"><span className="admin-user-avatar">{(profile.preferred_name?.trim()[0] ?? profile.id[0]).toUpperCase()}</span><div><strong>{profile.preferred_name || `Account ${profile.id.slice(0, 8)}`}</strong><small>{profile.email || profile.phone || `ID ${profile.id.slice(0, 12)}…`} · {profile.status} · Last sign-in {formatDate(profile.last_login_at)}</small></div></div>
                   <div className="admin-role-list">{rolesByUser(profile.id).length ? rolesByUser(profile.id).map((assignment) => <span className="admin-role-chip" key={assignment.id}>{assignment.role?.name ?? 'Unknown role'} · {assignment.branch}</span>) : <span className="admin-role-chip empty">No roles assigned</span>}</div>
-                  {canManageUsers && <label className="admin-status-field">Profile status<select value={profile.status} disabled={saving || profile.id === currentUserId} onChange={(event) => void statusChange(profile, event.target.value as UserProfile['status'])}>{userStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select><small>Profile status only; revoking Supabase sign-in requires a trusted server-side admin integration.</small></label>}
+                  {canManageUsers && <label className="admin-status-field">Profile status<select value={profile.status} disabled={saving || profile.id === currentUserId || profile.status === 'pending'} onChange={(event) => void statusChange(profile, event.target.value as UserProfile['status'])}>{profile.status === 'pending' && <option value="pending">pending</option>}{userStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select><small>{profile.status === 'pending' ? 'Preview invitation only; activation is not available here.' : 'Profile status only; revoking Supabase sign-in requires a trusted server-side admin integration.'}</small></label>}
                   {canManageRoles && <div className="admin-assignment-list">{rolesByUser(profile.id).map((assignment) => <button key={assignment.id} className="admin-remove-role" disabled={saving} onClick={() => void removeAssignment(assignment)} aria-label={`Remove ${assignment.role?.name ?? 'role'}`}><Icon name="close" size={13} />{assignment.role?.code === 'administrator' || assignment.role?.code === 'super_administrator' ? 'Protected role' : 'Remove role'}</button>)}</div>}
                 </article>)}
             </div>
@@ -332,6 +506,7 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
           {tab === 'roles' && <section className="admin-section">
             <div className="section-header"><div><span className="eyebrow">Least privilege</span><h2>Roles and permissions</h2></div><span className="admin-section-count">{roles.length} roles · {permissions.length} permissions</span></div>
             {!canManageRoles && supabase && <div className="admin-inline-notice"><Icon name="lock" size={16} /> Role management requires the administration.roles permission.</div>}
+            {!supabase && <div className="admin-inline-notice"><Icon name="info" size={16} /> Existing roles are shown for preview. Editing permission rules requires a trusted, connected backend.</div>}
             <div className="admin-role-layout">
               <div className="admin-role-selector glass-card">{roles.length === 0 ? <div className="admin-empty"><strong>{supabase ? 'Roles are not available' : 'Preview: church roles'}</strong><span>Configured roles and permissions are listed when connected.</span></div> : roles.map((role) => <button key={role.id} className={`admin-role-select ${selectedRole === role.id ? 'active' : ''}`} onClick={() => setSelectedRole(role.id)}><span><strong>{role.name}</strong><small>{role.description || role.code}</small></span>{role.is_system_role && <em>System</em>}</button>)}</div>
               <div className="admin-permission-panel glass-card">
@@ -343,7 +518,7 @@ export function AdministrationPageImpl({ onAction }: { onAction: (message: strin
                     const role = roles.find((item) => item.id === selectedRole);
                     const protectedRole = ['administrator', 'super_administrator'].includes(role?.code ?? '') && !isSuperAdministrator;
                     const protectedPermission = !isSuperAdministrator && ['administration.roles', 'administration.audit'].includes(permission.code);
-                    return <label key={permission.id} className="admin-permission-row"><span><strong>{permission.name}</strong><small>{permission.description || permission.code}</small></span><input type="checkbox" checked={enabled} disabled={!canManageRoles || saving || Boolean(protectedRole) || protectedPermission} onChange={(event) => void togglePermission(permission, event.target.checked)} /></label>;
+                    return <label key={permission.id} className="admin-permission-row"><span><strong>{permission.name}</strong><small>{permission.description || permission.code}</small></span><input type="checkbox" checked={enabled} disabled={!supabase || !canManageRoles || saving || Boolean(protectedRole) || protectedPermission} onChange={(event) => void togglePermission(permission, event.target.checked)} /></label>;
                   })}</div>
                 </> : <div className="admin-empty"><Icon name="lock" size={23} /><strong>Select a role</strong><span>Choose a role to review its permission set.</span></div>}
               </div>

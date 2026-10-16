@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { BrandMark, Icon } from '../components/Icon';
 
-export function LandingPage({ onSignIn, onSignUp, previewMode = false, onEnterPreview }: {
+export function LandingPage({ onSignIn, onSignUp, previewMode = false, onEnterPreview, onEnterAdminPreview }: {
   onSignIn?: () => void;
   onSignUp?: () => void;
   previewMode?: boolean;
   onEnterPreview?: () => void;
+  onEnterAdminPreview?: () => void;
 }) {
   const [authNotice, setAuthNotice] = useState('');
   const openSignIn = () => {
@@ -35,6 +36,7 @@ export function LandingPage({ onSignIn, onSignUp, previewMode = false, onEnterPr
           <button className="button button-primary" onClick={openSignUp}>Create a member account <Icon name="arrow-up" size={15} /></button>
           <button className="button button-ghost" onClick={openSignIn}>Sign in to your workspace</button>
           {previewMode && <button className="button button-ghost" onClick={onEnterPreview}>Explore the preview workspace <Icon name="arrow-up" size={15} /></button>}
+          {previewMode && onEnterAdminPreview && <button className="button button-ghost" onClick={onEnterAdminPreview}><Icon name="settings" size={15} /> Explore Admin preview</button>}
         </div>
         {authNotice && <p className="landing-auth-notice" role="status">{authNotice}</p>}
         <div className="landing-trust"><Icon name="shield" size={15} /><span>{previewMode

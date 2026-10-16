@@ -40,4 +40,13 @@ export const pageSections: PageSection[] = [
       { id: 'member-notifications', label: 'Notification preferences', description: 'Manage announcements and reminders', icon: 'bell' },
     ],
   },
+  {
+    label: 'Media team',
+    items: [
+      { id: 'media-library', label: 'Media library', description: 'Organize media assets and coverage', icon: 'file' },
+      { id: 'media-team', label: 'Team assignments', description: 'Coordinate media volunteers', icon: 'users' },
+      { id: 'media-equipment', label: 'Equipment', description: 'Track media equipment and readiness', icon: 'settings' },
+      { id: 'media-run-sheet', label: 'Service run sheet', description: 'Plan service production cues', icon: 'clipboard' },
+    ],
+  },
 ];

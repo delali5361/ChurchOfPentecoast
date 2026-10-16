@@ -84,7 +84,13 @@ Do not apply the migration chain yet: the Phase 1 migration currently recreates
 tables already introduced by earlier foundation migrations, so compatibility must be reconciled before database setup. Without Supabase
 configuration, people, visitor, household, structure, attendance, event,
 communications, and pastoral-care workflows can be tried with local-only
-preview data. Finance and account administration remain unavailable in preview.
+preview data. Finance remains unavailable in preview. A separate Admin preview
+lets you save sample staff invitations and role assignments in the current
+browser only; it does not authenticate staff, grant real Admin access, or send
+invitation emails. Preview accounts use the entered username and initial
+password, preserve the selected staff role, and require a password change at
+first preview sign-in. Do not use real credentials in preview mode; browser
+storage is not a secure credential store.
 
 **Phase 7 — Communications (implemented):** create reusable message
 templates by channel (email, SMS, push), draft and schedule audience-targeted
@@ -114,7 +120,10 @@ ban; inviting users or revoking sign-in requires a trusted server-side admin
 integration. Role and account mutations are guarded by
 organization-scoped RLS policies; privileged system roles and permissions are
 reserved for super administrators. `20261010019000_phase10_administration.sql`
-adds these policies and audit triggers.
+adds these policies and audit triggers. The frontend-only Admin preview is
+available from the landing page when Supabase is not configured; its sample
+staff invitations and role assignments are stored in browser-local preview
+storage and are never sent to Supabase or email.
 
 **Phase 11 — Public portal and role dashboards (in progress):** introduces a
 public Grace Assembly landing page, sign-in, and Member registration. Public
@@ -141,6 +150,11 @@ committed.
 linkage, constrained event registration, and communications permission checks.
 Youth Executive access remains limited to its dashboard until members can be
 linked to the Youth ministry/group and the data scope is enforced in RLS.
+The Media role has a dedicated dashboard and sidebar for events, communications,
+media asset cataloguing, volunteer coverage assignments, equipment readiness,
+and service run sheets. Asset records and production planning currently use
+browser-local preview data only; file uploads and shared, permission-enforced
+team records require backend storage and authorization.
 The initial Admin role must be assigned through a trusted setup process; public
 registration never grants administrator access.
 

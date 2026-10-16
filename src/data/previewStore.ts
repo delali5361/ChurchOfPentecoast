@@ -20,6 +20,16 @@ export function createPreviewId() {
   return globalThis.crypto?.randomUUID?.() ?? `preview-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+export type PreviewAccount = {
+  id: string;
+  username: string;
+  email: string;
+  password: string;
+  role: string;
+  mustChangePassword: boolean;
+  createdAt: string;
+};
+
 export function getPreviewOrganization(branches: WorkspaceOrganization['branches'] = []): WorkspaceOrganization {
   return { id: previewOrganizationId, name: 'Grace Assembly', branches };
 }

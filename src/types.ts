@@ -17,7 +17,11 @@ export type PageId =
   | 'member-attendance'
   | 'member-ministries'
   | 'member-care'
-  | 'member-notifications';
+  | 'member-notifications'
+  | 'media-library'
+  | 'media-team'
+  | 'media-equipment'
+  | 'media-run-sheet';
 
 export type PageSection = {
   label: string;

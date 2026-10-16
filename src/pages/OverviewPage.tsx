@@ -17,8 +17,8 @@ const roleDashboards: Record<string, { label: string; title: string; description
   presiding_elder: {
     label: 'CHURCH LEADERSHIP',
     title: 'Lead with care and clarity.',
-    description: 'Keep a view of church life, people, ministry, and shared progress.',
-    pages: ['people', 'visitors', 'attendance', 'events', 'reports'],
+    description: 'Keep a view of church life, people, ministry, pastoral care, giving, and shared progress across the church.',
+    pages: ['people', 'visitors', 'households', 'structure', 'attendance', 'events', 'communications', 'pastoral-care', 'finance', 'reports'],
   },
   youth_executive: {
     label: 'YOUTH MINISTRY',
@@ -29,8 +29,8 @@ const roleDashboards: Record<string, { label: string; title: string; description
   media: {
     label: 'MEDIA & COMMUNICATIONS',
     title: 'Share the moments that bring us together.',
-    description: 'Prepare church announcements and help everyone stay connected.',
-    pages: ['events', 'communications'],
+    description: 'Plan service coverage, coordinate the production team, organize assets, and help the church stay connected.',
+    pages: ['events', 'communications', 'media-library', 'media-team', 'media-equipment', 'media-run-sheet'],
   },
 };
 

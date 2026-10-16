@@ -2,18 +2,27 @@ import { useState, type FormEvent } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BrandMark, Icon } from '../components/Icon';
 
-export function SignInPage({ client, initialMode = 'sign-in', onBack, onPreviewAccess }: {
+export function SignInPage({ client, initialMode = 'sign-in', onBack, onPreviewAccess, onPreviewLogin }: {
   client: SupabaseClient | null;
   initialMode?: 'sign-in' | 'sign-up';
   onBack: () => void;
   onPreviewAccess?: () => void;
+  onPreviewLogin?: (username: string, password: string) => boolean;
 }) {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>(initialMode);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const username = String(form.get('username') ?? '').trim() || String(form.get('email') ?? '').trim();
+    const password = String(form.get('password') ?? '');
     if (!client) {
+      if (mode === 'sign-in' && onPreviewLogin) {
+        const signedIn = onPreviewLogin(username, password);
+        if (!signedIn) setMessage('Preview sign-in failed. Use a valid local admin or member preview account.');
+        return;
+      }
       setMessage(mode === 'sign-in'
         ? 'Sign-in form preview: authentication will be connected in the backend phase.'
         : 'Member sign-up form preview: account creation will be connected in the backend phase.');
@@ -21,14 +30,11 @@ export function SignInPage({ client, initialMode = 'sign-in', onBack, onPreviewA
     }
     setBusy(true);
     setMessage('');
-    const form = new FormData(event.currentTarget);
-    const email = String(form.get('email') ?? '').trim();
-    const password = String(form.get('password') ?? '');
     try {
       const result = mode === 'sign-in'
-        ? await client.auth.signInWithPassword({ email, password })
+        ? await client.auth.signInWithPassword({ email: username, password })
         : await client.auth.signUp({
-          email,
+          email: username,
           password,
           options: {
             data: {
@@ -83,7 +89,7 @@ export function SignInPage({ client, initialMode = 'sign-in', onBack, onPreviewA
           <label>Preferred name <span>(optional)</span><input type="text" name="preferred_name" autoComplete="nickname" maxLength={80} placeholder="What should we call you?" /></label>
           <label>Phone <span>(optional)</span><input type="tel" name="phone" autoComplete="tel" maxLength={40} placeholder="Phone number" /></label>
         </>}
-        <label>Email address<input type="email" name="email" required autoComplete="username" placeholder="you@church.org" /></label>
+        <label>{mode === 'sign-in' ? 'Username or email' : 'Email address'}<input type={mode === 'sign-in' ? 'text' : 'email'} name={mode === 'sign-in' ? 'username' : 'email'} required autoComplete="username" placeholder={mode === 'sign-in' ? 'admin or email' : 'you@church.org'} /></label>
         <label>Password<input type="password" name="password" required minLength={6} autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} placeholder="At least 6 characters" /></label>
         {message && <div className="form-message" role="status">{message}</div>}
         <button className="button button-primary auth-submit" disabled={busy}>{busy ? 'Working...' : mode === 'sign-in' ? 'Sign in securely' : 'Create account'} <Icon name="arrow-up" size={16} /></button>

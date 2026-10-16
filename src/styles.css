@@ -1214,10 +1214,56 @@ button.member-feature-card:hover { border-color: rgba(175,219,198,.28); transfor
 .admin-inline-notice { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid rgba(225, 174, 93, .2); border-radius: 9px; background: rgba(225, 174, 93, .07); color: #e7c996; font-size: 11px; line-height: 1.5; }
 .admin-assign-form { display: flex; flex-direction: column; gap: 13px; padding: 16px; }
 .admin-assign-form h3 { color: #f0f6f0; font: 600 14px Manrope, sans-serif; }
+.admin-invite-form > div:first-child p { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.admin-invite-form .admin-assign-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .admin-assign-fields { display: grid; grid-template-columns: 1.2fr 1fr 1fr auto; gap: 10px; align-items: end; }
 .admin-assign-fields label, .admin-status-field { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 10px; }
 .admin-assign-fields select, .admin-status-field select { min-width: 0; height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; color: #eaf4ed; background: rgba(9, 28, 24, .78); font: inherit; }
+.admin-assign-fields input { min-width: 0; height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; color: #eaf4ed; background: rgba(9, 28, 24, .78); font: inherit; }
+.admin-assign-fields input::placeholder { color: var(--muted); }
 .admin-assign-fields .button { white-space: nowrap; }
+.modal-backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 20px; background: rgba(7, 20, 18, .68); backdrop-filter: blur(12px); z-index: 150; }
+.modal-card { width: min(460px, 100%); padding: 22px; border: 1px solid rgba(154, 215, 190, .18); border-radius: 20px; background: linear-gradient(160deg, rgba(22, 41, 36, .98), rgba(13, 31, 27, .94)); box-shadow: 0 24px 70px rgba(0, 0, 0, .3); }
+.modal-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: #dcefe7; }
+.modal-card h3 { color: #f0f6f0; font: 600 18px Manrope, sans-serif; }
+.modal-card p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.modal-card form { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.modal-card label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 10px; }
+.modal-card input { width: 100%; height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; color: #eaf4ed; background: rgba(8, 24, 19, .84); }
+.modal-card .button { margin-top: 6px; }
+.media-workspace { display: flex; flex-direction: column; gap: 14px; }
+.media-workspace-intro { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding: 20px; }
+.media-workspace-intro h2 { margin-top: 8px; color: #f0f6f0; font: 600 19px Manrope, sans-serif; }
+.media-workspace-intro p { max-width: 700px; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.media-preview-badge { flex: 0 0 auto; padding: 6px 9px; border: 1px solid rgba(225, 174, 93, .2); border-radius: 7px; color: #e7c996; background: rgba(225, 174, 93, .07); font-size: 9px; }
+.media-entry-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 11px; padding: 16px; }
+.media-entry-form label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 10px; }
+.media-entry-form input, .media-entry-form select { min-width: 0; height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 8px; color: #eaf4ed; background: rgba(9, 28, 24, .78); font: inherit; }
+.media-entry-form .button { white-space: nowrap; }
+.media-card-list { display: flex; flex-direction: column; gap: 9px; }
+.media-record { display: flex; align-items: center; gap: 11px; min-width: 0; padding: 12px; }
+.media-record > div { flex: 1; min-width: 0; }
+.media-record strong, .media-record small { display: block; overflow-wrap: anywhere; }
+.media-record strong { color: #eaf4ed; font-size: 11px; }
+.media-record small { margin-top: 4px; color: var(--muted); font-size: 9px; }
+.media-record-icon, .media-cue-check { display: grid; flex: 0 0 34px; width: 34px; height: 34px; place-items: center; border-radius: 9px; color: #84d8b3; background: rgba(87, 201, 168, .12); }
+.media-cue-check { border: 1px solid var(--line); cursor: pointer; }
+.media-state { flex: 0 0 auto; padding: 5px 8px; border-radius: 6px; color: #a7dfc3; background: rgba(87, 201, 168, .1); font-size: 9px; }
+.media-state-attention { color: #e7c996; background: rgba(225, 174, 93, .1); }
+.media-record-complete { opacity: .7; }
+.media-record-complete strong { text-decoration: line-through; }
+.media-empty { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 100px; padding: 18px; color: var(--muted); font-size: 11px; }
+.media-footnote { color: var(--muted); font-size: 10px; line-height: 1.5; }
+@media (max-width: 900px) {
+  .media-entry-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .media-workspace-intro { flex-direction: column; }
+  .media-entry-form { grid-template-columns: 1fr; }
+  .media-entry-form .button { width: 100%; }
+  .media-record { align-items: flex-start; flex-wrap: wrap; }
+  .media-state { margin-left: 45px; }
+}
 .admin-user-list, .admin-audit-list, .admin-branch-list { display: flex; flex-direction: column; gap: 10px; }
 .admin-user-card { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) minmax(130px, auto); gap: 13px; align-items: center; padding: 14px; }
 .admin-user-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -1276,6 +1322,7 @@ button.member-feature-card:hover { border-color: rgba(175,219,198,.28); transfor
 @media (max-width: 900px) {
   .admin-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-assign-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-invite-form .admin-assign-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-role-layout { grid-template-columns: 1fr; }
   .admin-role-selector { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
 }
@@ -1284,6 +1331,7 @@ button.member-feature-card:hover { border-color: rgba(175,219,198,.28); transfor
   .admin-user-card { grid-template-columns: 1fr; }
   .admin-assignment-list { grid-column: 1; }
   .admin-assign-fields { grid-template-columns: 1fr; }
+  .admin-invite-form .admin-assign-fields { grid-template-columns: 1fr; }
   .admin-assign-fields .button { width: 100%; }
   .admin-audit-row { grid-template-columns: 32px minmax(0, 1fr); }
   .admin-audit-row time { grid-column: 2; text-align: left; }
